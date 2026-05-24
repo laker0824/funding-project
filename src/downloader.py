@@ -205,3 +205,37 @@ if __name__ == "__main__":
     print(f"  需下载: {len(qualified)} 只")
     ok, fail = download_nav_parallel(qualified, max_workers=8)
     print(f"\n完成: 成功 {ok}, 失败 {fail}")
+
+    print("\n步骤6: 下载基准指数数据")
+    download_index_data()
+    print("  基准指数下载完成")
+
+
+def download_index_data(codes=None):
+    """下载沪深300/中证500等指数日线数据（使用 AKShare）"""
+    from db import INDEX_CODES, save_index_data
+    import akshare as ak
+
+    if codes is None:
+        codes = list(INDEX_CODES.keys())
+
+    symbol_map = {
+        "000300": ("sh000300", "沪深300"),
+        "000905": ("sh000905", "中证500"),
+        "000688": ("sh000688", "科创50"),
+        "399001": ("sz399001", "深证成指"),
+    }
+
+    for code in codes:
+        if code not in symbol_map:
+            print(f"  {code}: 未知代码")
+            continue
+        symbol, name = symbol_map[code]
+        try:
+            df = ak.stock_zh_index_daily(symbol=symbol)
+            rows = [(code, str(row["date"])[:10], float(row["close"]))
+                    for _, row in df.iterrows()]
+            save_index_data(code, rows)
+            print(f"  {name} ({code}): {len(rows)} 条")
+        except Exception as e:
+            print(f"  {name} ({code}) 下载失败: {e}")

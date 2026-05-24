@@ -2,7 +2,7 @@
 
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
+from datetime import timedelta
 import os
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -39,6 +39,8 @@ def load_nav(code):
         df = df.dropna(subset=["date", "nav"]).reset_index(drop=True)
         df["nav"] = pd.to_numeric(df["nav"], errors="coerce")
         df = df.dropna(subset=["nav"])
+        if "acc_nav" not in df.columns:
+            df["acc_nav"] = df["nav"]
         return df
     except Exception as e:
         logger.warning("CSV load_nav failed for %s: %s", code, e)
@@ -122,6 +124,8 @@ def run_backtest(nav_df, schedule, get_amount_fn, strategy_name="", buy_fee_rate
 
     total_invested_with_fee = 0.0
     shares = 0.0
+    cum_dividends = 0.0
+    prev_div_gap = 0.0
     peak_nav = nav_series.iloc[0]
     state = {"peak_nav": peak_nav, "total_invested": 0, "total_shares": 0, "resets": 0}
 
@@ -130,20 +134,25 @@ def run_backtest(nav_df, schedule, get_amount_fn, strategy_name="", buy_fee_rate
         d = row["date"]
         nav = row["nav"]
         is_invest_day = d in schedule["date"].values if len(schedule) > 0 else False
+        acc_nav = row.get("acc_nav", nav)
+        div_gap = acc_nav - nav
+        if shares > 0:
+            div_income = max(0, div_gap - prev_div_gap) * shares
+            cum_dividends += div_income
+        prev_div_gap = div_gap
 
         amount = 0
         if is_invest_day:
             gross_amount = get_amount_fn(d, nav_series, state)
             if gross_amount > 0:
                 net_amount = gross_amount * (1 - buy_fee_rate)
-                fee = gross_amount - net_amount
                 shares += net_amount / nav
                 total_invested_with_fee += gross_amount
                 state["total_invested"] = total_invested_with_fee
                 state["total_shares"] = shares
                 amount = gross_amount
 
-        current_value = shares * nav
+        current_value = shares * nav + cum_dividends
 
         if nav > state["peak_nav"]:
             state["peak_nav"] = nav
@@ -321,7 +330,17 @@ def calc_metrics(result_df, nav_df, strategy_name=""):
                 win_months += 1
     win_rate = win_months / invest_months * 100 if invest_months > 0 else 0
 
-    if nav_df is not None and len(nav_df) > 1 and "nav" in nav_df.columns:
+    if nav_df is not None and len(nav_df) > 1 and "acc_nav" in nav_df.columns:
+        daily_returns = nav_df["acc_nav"].pct_change().dropna()
+        if len(daily_returns) > 1 and daily_returns.std() > 0:
+            excess = daily_returns - 0.03 / 252
+            sharpe = np.sqrt(252) * excess.mean() / excess.std()
+        else:
+            sharpe = 0
+        acc_start = nav_df["acc_nav"].iloc[0]
+        acc_end = nav_df["acc_nav"].iloc[-1]
+        lump_sum_return = (acc_end / acc_start - 1) * 100 if acc_start > 0 else 0
+    elif nav_df is not None and len(nav_df) > 1 and "nav" in nav_df.columns:
         daily_returns = nav_df["nav"].pct_change().dropna()
         if len(daily_returns) > 1 and daily_returns.std() > 0:
             excess = daily_returns - 0.03 / 252

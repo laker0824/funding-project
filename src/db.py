@@ -60,7 +60,21 @@ CREATE TABLE IF NOT EXISTS strategy_detail (
     invest_count INTEGER,
     PRIMARY KEY (code, strategy, window)
 );
+
+CREATE TABLE IF NOT EXISTS index_nav (
+    code TEXT,
+    date TEXT,
+    value REAL,
+    PRIMARY KEY (code, date)
+);
 """
+
+INDEX_CODES = {
+    "000300": "沪深300",
+    "000905": "中证500",
+    "000688": "科创50",
+    "399001": "深证成指",
+}
 
 
 def get_conn():
@@ -278,6 +292,51 @@ def get_distinct_strategies():
     try:
         conn = get_conn()
         rows = conn.execute("SELECT DISTINCT strategy FROM strategy_detail").fetchall()
+        conn.close()
+        return [r[0] for r in rows]
+    except Exception:
+        return []
+
+
+def save_index_data(code, rows):
+    if not rows:
+        return
+    conn = get_conn()
+    try:
+        conn.executemany(
+            "INSERT OR REPLACE INTO index_nav (code, date, value) VALUES (?, ?, ?)",
+            rows
+        )
+        conn.commit()
+    except Exception:
+        pass
+    finally:
+        conn.close()
+
+
+def load_index_data(code):
+    if not code:
+        return None
+    try:
+        conn = get_conn()
+        df = pd.read_sql(
+            "SELECT date, value FROM index_nav WHERE code = ? ORDER BY date",
+            conn, params=(code,)
+        )
+        conn.close()
+        if len(df) == 0:
+            return None
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        df = df.dropna(subset=["date"]).reset_index(drop=True)
+        return df
+    except Exception:
+        return None
+
+
+def get_index_codes():
+    try:
+        conn = get_conn()
+        rows = conn.execute("SELECT DISTINCT code FROM index_nav").fetchall()
         conn.close()
         return [r[0] for r in rows]
     except Exception:

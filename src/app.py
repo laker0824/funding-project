@@ -9,7 +9,6 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import plotly.graph_objects as go
-from io import BytesIO
 from datetime import datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
@@ -45,8 +44,6 @@ CN = {
     "avg_excess": "平均超额", "beat_pct": "跑赢比例", "基金类型": "基金类型",
     "基金数量": "基金数量", "跑赢比例(%)": "跑赢比例(%)", "平均超额(%)": "平均超额(%)",
 }
-
-_CN_SATURATED = {v: k for k, v in CN.items()}  # reverse not used
 
 def df_cn(df, columns=None):
     df = df.copy()
@@ -111,15 +108,13 @@ def load_detail(window=None):
 
 
 @st.cache_data
+def load_cached_nav(code):
+    return load_nav(code)
+
+
+@st.cache_data
 def load_fund_info(code):
     return db.get_fund_info(code)
-
-
-def fig_to_png(fig):
-    buf = BytesIO()
-    fig.savefig(buf, format="png", dpi=120, bbox_inches="tight")
-    buf.seek(0)
-    return buf
 
 
 # ── 顶部导航 ──
@@ -299,20 +294,37 @@ elif choice == pages[1]:
 
             # 图表
             st.subheader("资金曲线")
-            nav_df = load_nav(fund_code)
+            nav_df = load_cached_nav(fund_code)
             window_years = parse_window_years(selected_window)
             sched = generate_schedule(nav_df["date"], nav_df["date"].max() - years_offset(window_years),
                                       nav_df["date"].max(), freq="M", day=1)
 
             fig_mpl, ax = plt.subplots(figsize=(14, 4))
-            ax.plot(nav_df[nav_df["date"] >= nav_df["date"].max() - years_offset(window_years)]["date"],
-                    nav_df[nav_df["date"] >= nav_df["date"].max() - years_offset(window_years)]["nav"],
+            start = nav_df["date"].max() - years_offset(window_years)
+            fund_period = nav_df[nav_df["date"] >= start].copy()
+            ax.plot(fund_period["date"], fund_period["nav"],
                     color="black", linewidth=1.5, label="净值(NAV)")
+
+            # 基准指数叠加
+            idx_df = db.load_index_data("000300")
+            if idx_df is not None and len(idx_df) > 0:
+                idx_period = idx_df[(idx_df["date"] >= fund_period["date"].iloc[0]) &
+                                    (idx_df["date"] <= fund_period["date"].iloc[-1])].copy()
+                if len(idx_period) > 5:
+                    norm = idx_period["value"].iloc[0]
+                    idx_period["norm"] = idx_period["value"] / norm * fund_period["nav"].iloc[0]
+                    ax.plot(idx_period["date"], idx_period["norm"],
+                            color="orange", linewidth=1, linestyle="--", alpha=0.8, label="沪深300")
+                    fund_ret = fund_period["nav"].iloc[-1] / fund_period["nav"].iloc[0] - 1
+                    idx_ret = idx_period["value"].iloc[-1] / idx_period["value"].iloc[0] - 1
+                    st.info(f"📊 区间收益: **基金 {fund_ret*100:+.1f}%** vs **沪深300 {idx_ret*100:+.1f}%** （超额 {fund_ret-idx_ret:+.1%}）")
+
             loc = mdates.AutoDateLocator()
             ax.xaxis.set_major_locator(loc)
             ax.xaxis.set_major_formatter(mdates.AutoDateFormatter(loc))
             fig_mpl.autofmt_xdate()
-            ax.set_title("净值曲线")
+            ax.legend(prop=_get_font(9))
+            ax.set_title("净值曲线 vs 沪深300（基准归一化）")
             ax.grid(True, alpha=0.3)
             plt.tight_layout()
             st.pyplot(fig_mpl)
@@ -356,7 +368,7 @@ elif choice == pages[1]:
             )
             st.plotly_chart(fig_pl, use_container_width=True)
 
-            nav_df = load_nav(fund_code)
+            nav_df = load_cached_nav(fund_code)
             if os.path.exists(os.path.join(DATA_DIR, "nav", f"{fund_code}.csv")):
                 st.subheader("净值数据预览")
                 st.dataframe(df_cn(nav_df.tail(30), ["date", "nav", "acc_nav"])
@@ -397,7 +409,7 @@ elif choice == pages[2]:
         progress = st.progress(0)
 
         for i, code in enumerate(test_codes):
-            nav_df = load_nav(code)
+            nav_df = load_cached_nav(code)
             if nav_df is None or len(nav_df) < 300:
                 progress.progress((i + 1) / len(test_codes))
                 continue

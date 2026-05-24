@@ -7,7 +7,7 @@ from concurrent.futures import as_completed
 import itertools
 
 sys.path.insert(0, os.path.dirname(__file__))
-from strategies import load_nav, generate_schedule, run_backtest, composite_score
+from strategies import load_nav, generate_schedule, run_backtest, composite_score, years_offset
 from strategies import strategy_regular, strategy_ma_deviation, strategy_drawdown
 from strategies import strategy_take_profit, strategy_ma_stop, strategy_value_average
 
@@ -65,7 +65,7 @@ def run_param(code, strategy_name, param_kwargs):
         if nav_df is None or len(nav_df) < 300:
             return None
 
-        start_date = nav_df["date"].max() - pd.DateOffset(years=3)
+        start_date = nav_df["date"].max() - years_offset(3)
         end_date = nav_df["date"].max()
         mask = (nav_df["date"] >= start_date) & (nav_df["date"] <= end_date)
         nav_period = nav_df[mask].copy().reset_index(drop=True)

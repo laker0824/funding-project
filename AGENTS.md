@@ -61,6 +61,20 @@
 - `run_all_strategies_multi_window` 内部窗口级并行: `ThreadPoolExecutor(max_workers=min(len(windows), 6))`
 - `run_all_strategies` 支持 `nav_df` 参数传入，避免窗口间重复加载净值
 - `ProcessPoolExecutor` 在 Windows 上会死锁（`spawn` 模式 + SQLite 竞争）
+- `viz.py:plot_strategy_curves` 缓存回测结果（1 次运行供 3 子图复用）
+- `app.py` 使用 `@st.cache_data` 包装 `load_cached_nav` 避免重复读净值
+
+### 分红处理
+- `run_backtest` 跟踪 `acc_nav - nav` 差值变化，累积分红收入
+- `value = shares * nav + cum_dividends` 反映含分红的真实价值
+- `calc_metrics` 改用 `acc_nav` 计算夏普比率和一次性投入收益
+- CSV fallback 无 `acc_nav` 列时自动用 `nav` 填充
+
+### 基准指数
+- `db.py`: 新增 `index_nav` 表 + `INDEX_CODES`（沪深300/中证500/科创50/深证成指）
+- `downloader.py:download_index_data()` 使用 AKShare 下载指数日线
+- `app.py` 净值图表叠加归一化基准线 + 区间收益对比
+- 基准数据下载: `python src/downloader.py` 步骤6
 
 ### 数据下载 (`src/downloader.py`)
 - 基金成立筛选条件: `成立>1年`（之前为 3 年）

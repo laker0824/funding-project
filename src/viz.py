@@ -9,7 +9,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from strategies import run_all_strategies, load_nav, run_backtest, generate_schedule
+from strategies import run_all_strategies, load_nav, run_backtest, generate_schedule, years_offset
 from strategies import strategy_regular, strategy_ma_deviation, strategy_drawdown
 from strategies import strategy_take_profit, strategy_ma_stop, strategy_value_average
 
@@ -54,7 +54,7 @@ def plot_strategy_curves(fund_code, fund_name="", save=True, show=True):
         print(f"基金 {fund_code} 净值数据不足")
         return
 
-    start_date = nav_df["date"].max() - pd.DateOffset(years=3)
+    start_date = nav_df["date"].max() - years_offset(3)
     end_date = nav_df["date"].max()
     mask = (nav_df["date"] >= start_date) & (nav_df["date"] <= end_date)
     nav_period = nav_df[mask].copy().reset_index(drop=True)
@@ -80,9 +80,15 @@ def plot_strategy_curves(fund_code, fund_name="", save=True, show=True):
     colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b",
               "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
 
-    ax1.plot(nav_period["date"], nav_period["nav"], color="black", linewidth=1.5, label="净值(NAV)")
-    for idx, (sname, sfn) in enumerate(strategies):
+    # 各策略一次性回测，缓存结果供 3 个子图复用
+    bcache = {}
+    for sname, sfn in strategies:
         metrics, result_df = run_backtest(nav_period, sched, sfn, sname)
+        bcache[sname] = (metrics, result_df)
+
+    ax1.plot(nav_period["date"], nav_period["nav"], color="black", linewidth=1.5, label="净值(NAV)")
+    for idx, (sname, _) in enumerate(strategies):
+        metrics, result_df = bcache[sname]
         ax1.plot(result_df["date"], result_df["value"], color=colors[idx % len(colors)],
                  linewidth=1, alpha=0.8, label=f"{sname}({metrics['annualized_return_pct']:+.1f}%)")
 
@@ -91,8 +97,8 @@ def plot_strategy_curves(fund_code, fund_name="", save=True, show=True):
     ax1.legend(prop=_get_font(8), loc="upper left", ncol=2)
     ax1.grid(True, alpha=0.3)
 
-    for idx, (sname, sfn) in enumerate(strategies):
-        metrics, result_df = run_backtest(nav_period, sched, sfn, sname)
+    for idx, (sname, _) in enumerate(strategies):
+        _, result_df = bcache[sname]
         values = result_df["value"].values
         peak = np.maximum.accumulate(values)
         safe = np.where(peak == 0, 1, peak)
@@ -108,8 +114,8 @@ def plot_strategy_curves(fund_code, fund_name="", save=True, show=True):
     ax2.grid(True, alpha=0.3)
     ax2.invert_yaxis()
 
-    for idx, (sname, sfn) in enumerate(strategies):
-        metrics, result_df = run_backtest(nav_period, sched, sfn, sname)
+    for idx, (sname, _) in enumerate(strategies):
+        _, result_df = bcache[sname]
         invest_df = result_df[result_df["amount"] > 0]
         if len(invest_df) > 0:
             ax3.bar(invest_df["date"], invest_df["amount"],

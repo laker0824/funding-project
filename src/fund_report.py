@@ -5,7 +5,7 @@ import sys
 import argparse
 
 sys.path.insert(0, os.path.dirname(__file__))
-from strategies import run_all_strategies, load_nav, generate_schedule, run_backtest
+from strategies import run_all_strategies, load_nav, generate_schedule, run_backtest, years_offset
 from strategies import strategy_regular, strategy_ma_deviation, strategy_drawdown
 from strategies import strategy_take_profit, strategy_ma_stop, strategy_value_average, composite_score
 import viz
@@ -50,7 +50,7 @@ def print_best_strategy_detail(code, strategies_result):
 
 def print_investment_schedule(code, best_strategy_name):
     nav_df = load_nav(code)
-    start_date = nav_df["date"].max() - pd.DateOffset(years=3)
+    start_date = nav_df["date"].max() - years_offset(3)
     end_date = nav_df["date"].max()
     mask = (nav_df["date"] >= start_date) & (nav_df["date"] <= end_date)
     nav_period = nav_df[mask].copy().reset_index(drop=True)
