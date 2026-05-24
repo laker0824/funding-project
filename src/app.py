@@ -7,6 +7,8 @@ import subprocess
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+import plotly.graph_objects as go
 from io import BytesIO
 from datetime import datetime
 
@@ -302,18 +304,23 @@ elif choice == pages[1]:
             sched = generate_schedule(nav_df["date"], nav_df["date"].max() - years_offset(window_years),
                                       nav_df["date"].max(), freq="M", day=1)
 
-            fig, axes = plt.subplots(2, 1, figsize=(14, 8), sharex=True)
+            fig_mpl, ax = plt.subplots(figsize=(14, 4))
+            ax.plot(nav_df[nav_df["date"] >= nav_df["date"].max() - years_offset(window_years)]["date"],
+                    nav_df[nav_df["date"] >= nav_df["date"].max() - years_offset(window_years)]["nav"],
+                    color="black", linewidth=1.5, label="净值(NAV)")
+            loc = mdates.AutoDateLocator()
+            ax.xaxis.set_major_locator(loc)
+            ax.xaxis.set_major_formatter(mdates.AutoDateFormatter(loc))
+            fig_mpl.autofmt_xdate()
+            ax.set_title("净值曲线")
+            ax.grid(True, alpha=0.3)
+            plt.tight_layout()
+            st.pyplot(fig_mpl)
+            plt.close()
 
-            axes[0].plot(nav_df[nav_df["date"] >= nav_df["date"].max() - years_offset(window_years)]["date"],
-                         nav_df[nav_df["date"] >= nav_df["date"].max() - years_offset(window_years)]["nav"],
-                         color="black", linewidth=1.5, label="净值(NAV)")
+            st.subheader("各策略累计收益（动态图表——可缩放/平移）")
+            fig_pl = go.Figure()
             colors = plt.cm.tab10(np.linspace(0, 1, len(result)))
-            for idx, (_, row) in enumerate(result.iterrows()):
-                axes[0].plot([], [], color=colors[idx], label=f"{row['strategy']} ({row['annualized_return_pct']:+.1f}%)")
-            axes[0].set_title("策略资金曲线（仅显示标签，详情见数据表）")
-            axes[0].legend(prop=_get_font(8), ncol=2)
-            axes[0].grid(True, alpha=0.3)
-
             for idx, (_, row) in enumerate(result.iterrows()):
                 sfn = {
                     "定期定额(月)": strategy_regular(BASE_AMOUNT),
@@ -324,21 +331,30 @@ elif choice == pages[1]:
                     "MA停投法": strategy_ma_stop(BASE_AMOUNT),
                     "价值平均法": strategy_value_average(BASE_AMOUNT),
                 }.get(row["strategy"])
-                if sfn:
-                    _, rd = run_backtest(nav_df, sched, sfn, row["strategy"])
-                    if len(rd) > 0:
-                        axes[1].fill_between(rd["date"], rd["value"] - rd["invested"], 0, alpha=0.15)
-                        axes[1].plot(rd["date"], rd["value"] - rd["invested"],
-                                     color=colors[idx], linewidth=1, label=row["strategy"])
-
-            axes[1].axhline(y=0, color="red", linestyle="--", linewidth=0.5)
-            axes[1].set_title("各策略累计收益")
-            axes[1].legend(prop=_get_font(8), ncol=2)
-            axes[1].grid(True, alpha=0.3)
-
-            plt.tight_layout()
-            st.pyplot(fig)
-            plt.close()
+                if not sfn:
+                    continue
+                _, rd = run_backtest(nav_df, sched, sfn, row["strategy"])
+                if len(rd) == 0:
+                    continue
+                r, g, b = colors[idx][:3]
+                fig_pl.add_trace(go.Scatter(
+                    x=rd["date"], y=rd["value"] - rd["invested"],
+                    mode="lines", name=row["strategy"],
+                    line=dict(color=f"rgb({r*255:.0f},{g*255:.0f},{b*255:.0f})", width=1.5),
+                    fill="tozeroy",
+                    fillcolor=f"rgba({r*255:.0f},{g*255:.0f},{b*255:.0f},0.15)",
+                    hovertemplate="%{x|%Y-%m-%d}<br>累计收益: %{y:+.2f}元<br>%{legend}<extra></extra>"
+                ))
+            fig_pl.add_hline(y=0, line_dash="dash", line_color="red", line_width=0.8)
+            fig_pl.update_layout(
+                hovermode="x unified",
+                height=400,
+                margin=dict(l=20, r=20, t=10, b=0),
+                legend=dict(orientation="h", y=1.02, x=0.5, xanchor="center", font=dict(size=10)),
+                xaxis=dict(rangeslider=dict(visible=True), title="日期"),
+                yaxis=dict(title="累计收益(元)"),
+            )
+            st.plotly_chart(fig_pl, use_container_width=True)
 
             nav_df = load_nav(fund_code)
             if os.path.exists(os.path.join(DATA_DIR, "nav", f"{fund_code}.csv")):

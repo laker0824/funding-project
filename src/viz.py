@@ -121,7 +121,10 @@ def plot_strategy_curves(fund_code, fund_name="", save=True, show=True):
     ax3.legend(prop=_get_font(8), loc="upper left", ncol=2)
     ax3.grid(True, alpha=0.3)
 
-    plt.xticks(rotation=45)
+    loc = mdates.AutoDateLocator()
+    ax1.xaxis.set_major_locator(loc)
+    ax1.xaxis.set_major_formatter(mdates.AutoDateFormatter(loc))
+    fig.autofmt_xdate()
     plt.tight_layout()
 
     if save:
