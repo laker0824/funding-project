@@ -4,22 +4,39 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 NAV_DIR = os.path.join(DATA_DIR, "nav")
 
 
 def load_nav(code):
-    from db import load_nav as db_load_nav
-    df = db_load_nav(code)
-    if df is not None:
-        return df
+    if not isinstance(code, str):
+        return None
+    try:
+        from db import load_nav as db_load_nav
+        df = db_load_nav(code)
+        if df is not None and len(df) > 0:
+            return df
+    except Exception as e:
+        logger.warning("DB load_nav failed for %s: %s", code, e)
     path = os.path.join(NAV_DIR, f"{code}.csv")
     if not os.path.exists(path):
         return None
-    df = pd.read_csv(path)
-    df["date"] = pd.to_datetime(df["date"])
-    return df
+    try:
+        df = pd.read_csv(path)
+        if "date" not in df.columns or "nav" not in df.columns:
+            return None
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        df = df.dropna(subset=["date", "nav"]).reset_index(drop=True)
+        df["nav"] = pd.to_numeric(df["nav"], errors="coerce")
+        df = df.dropna(subset=["nav"])
+        return df
+    except Exception as e:
+        logger.warning("CSV load_nav failed for %s: %s", code, e)
+        return None
 
 
 # ===================== 投资日期生成 =====================
@@ -27,14 +44,21 @@ def load_nav(code):
 
 def _next_biz_day(dates, target):
     """找到target当天或之后最近的交易日"""
+    if dates is None or len(dates) == 0:
+        return None
     mask = dates >= target
     if not mask.any():
         return None
-    return dates[mask].iloc[0]
+    filtered = dates[mask]
+    if isinstance(filtered, pd.DatetimeIndex):
+        return filtered[0]
+    return filtered.iloc[0]
 
 
 def generate_schedule(nav_dates, start_date, end_date, freq="M", day=None, weekday=None):
     """生成投资日期表，自动对齐到实际交易日"""
+    if nav_dates is None or len(nav_dates) == 0:
+        return pd.DataFrame(columns=["date"])
     nav_dates = pd.Series(nav_dates).sort_values().reset_index(drop=True)
     mask = (nav_dates >= pd.Timestamp(start_date)) & (nav_dates <= pd.Timestamp(end_date))
     range_dates = nav_dates[mask]
@@ -82,7 +106,13 @@ def run_backtest(nav_df, schedule, get_amount_fn, strategy_name="", buy_fee_rate
     sell_fee_rate: 赎回费率 (e.g. 0.005 for 0.5%)
     returns: dict with metrics
     """
+    if nav_df is None or len(nav_df) == 0:
+        return calc_metrics(pd.DataFrame(), nav_df, strategy_name), pd.DataFrame()
+    if "date" not in nav_df.columns or "nav" not in nav_df.columns:
+        return calc_metrics(pd.DataFrame(), nav_df, strategy_name), pd.DataFrame()
     nav_series = nav_df.set_index("date")["nav"]
+    if schedule is None or len(schedule) == 0:
+        schedule = pd.DataFrame(columns=["date"])
 
     total_invested_with_fee = 0.0
     shares = 0.0
@@ -218,8 +248,9 @@ def strategy_value_average(base_amount=1000, target_growth=0.01):
         current = nav_series.iloc[idx]
         current_shares = state.get("total_shares", 0)
         current_value = current_shares * current
-        target_value = state.get("month_count", 0) * base_amount * (1 + target_growth) ** state.get("month_count", 0)
-        state["month_count"] = state.get("month_count", 0) + 1
+        n = state.get("month_count", 0) + 1
+        target_value = n * base_amount * (1 + target_growth) ** n
+        state["month_count"] = n
         diff = target_value - current_value
         if diff > 0:
             return diff
@@ -230,17 +261,36 @@ def strategy_value_average(base_amount=1000, target_growth=0.01):
 # ===================== 指标计算 =====================
 
 
+_METRICS_DEFAULT = {k: 0 for k in ["strategy", "total_invested", "final_value", "total_return_pct",
+                                   "annualized_return_pct", "max_drawdown_pct", "sharpe_ratio",
+                                   "win_rate_pct", "calmar_ratio", "lump_sum_return_pct",
+                                   "vs_lump_sum_pct", "years", "invest_count"]}
+
+
+def _safe_val(x, default=0.0):
+    if x is None:
+        return default
+    try:
+        return x if (not isinstance(x, float) or not np.isnan(x)) else default
+    except Exception:
+        return default
+
+
 def calc_metrics(result_df, nav_df, strategy_name=""):
     """计算回测绩效指标"""
+    if result_df is None or len(result_df) == 0:
+        res = dict(_METRICS_DEFAULT)
+        res["strategy"] = strategy_name
+        return res
+
     invest_mask = result_df["invested"] > 0
     if not invest_mask.any():
-        return {k: 0 for k in ["strategy", "total_invested", "final_value", "total_return_pct",
-                                "annualized_return_pct", "max_drawdown_pct", "sharpe_ratio",
-                                "win_rate_pct", "calmar_ratio", "lump_sum_return_pct",
-                                "vs_lump_sum_pct", "years", "invest_count"]}
+        res = dict(_METRICS_DEFAULT)
+        res["strategy"] = strategy_name
+        return res
 
-    total_invested = result_df["invested"].iloc[-1]
-    final_value = result_df["value"].iloc[-1]
+    total_invested = _safe_val(result_df["invested"].iloc[-1])
+    final_value = _safe_val(result_df["value"].iloc[-1])
 
     invest_rows = result_df[invest_mask]
     first_date = invest_rows["date"].iloc[0]
@@ -255,26 +305,29 @@ def calc_metrics(result_df, nav_df, strategy_name=""):
     peak = np.maximum.accumulate(values_post)
     peak_safe = np.where(peak == 0, 1, peak)
     drawdowns = (peak_safe - values_post) / peak_safe * 100
-    max_dd = drawdowns.max()
+    max_dd = float(drawdowns.max())
 
     invest_months = int((result_df["amount"] > 0).sum())
     win_months = 0
     for i in range(1, len(result_df)):
-        if result_df["amount"].iloc[i] > 0:
+        if _safe_val(result_df["amount"].iloc[i]) > 0:
             if result_df["value"].iloc[i] >= result_df["invested"].iloc[i]:
                 win_months += 1
     win_rate = win_months / invest_months * 100 if invest_months > 0 else 0
 
-    daily_returns = nav_df["nav"].pct_change().dropna()
-    if len(daily_returns) > 1 and daily_returns.std() > 0:
-        excess = daily_returns - 0.03 / 252
-        sharpe = np.sqrt(252) * excess.mean() / excess.std()
+    if nav_df is not None and len(nav_df) > 1 and "nav" in nav_df.columns:
+        daily_returns = nav_df["nav"].pct_change().dropna()
+        if len(daily_returns) > 1 and daily_returns.std() > 0:
+            excess = daily_returns - 0.03 / 252
+            sharpe = np.sqrt(252) * excess.mean() / excess.std()
+        else:
+            sharpe = 0
+        lump_sum_return = (nav_df["nav"].iloc[-1] - nav_df["nav"].iloc[0]) / nav_df["nav"].iloc[0] * 100
     else:
         sharpe = 0
+        lump_sum_return = 0
 
-    lump_sum_return = (nav_df["nav"].iloc[-1] - nav_df["nav"].iloc[0]) / nav_df["nav"].iloc[0] * 100
     vs_lump_sum = total_return - lump_sum_return
-
     calmar = annualized / max_dd if max_dd > 0 else 0
 
     return {
@@ -299,6 +352,8 @@ def calc_metrics(result_df, nav_df, strategy_name=""):
 
 def run_all_strategies(code, start_date=None, end_date=None, years=None, buy_fee_rate=0.0, sell_fee_rate=0.0, min_period=200):
     """对一只基金运行所有策略"""
+    if not isinstance(code, str) or not code.strip():
+        return None
     nav_df = load_nav(code)
     if nav_df is None or len(nav_df) < 300:
         return None
@@ -363,8 +418,13 @@ def run_all_strategies(code, start_date=None, end_date=None, years=None, buy_fee
 
 def run_all_strategies_multi_window(code, windows=(1, 3, 5, 10), buy_fee_rate=0.0, sell_fee_rate=0.0):
     """对一只基金运行多个时间窗口的回测"""
-    nav_df = load_nav(code)
-    if nav_df is None or len(nav_df) < 300:
+    if not isinstance(code, str) or not code.strip():
+        return None
+    try:
+        nav_df = load_nav(code)
+        if nav_df is None or len(nav_df) < 300:
+            return None
+    except Exception:
         return None
 
     end = nav_df["date"].max()
@@ -375,11 +435,14 @@ def run_all_strategies_multi_window(code, windows=(1, 3, 5, 10), buy_fee_rate=0.
         mask = (nav_df["date"] >= start) & (nav_df["date"] <= end)
         if mask.sum() < min_rows:
             continue
-        result = run_all_strategies(code, start_date=start, end_date=end, min_period=min_rows,
-                                    buy_fee_rate=buy_fee_rate, sell_fee_rate=sell_fee_rate)
-        if result is not None:
-            result["window"] = f"{y}y"
-            all_results.append(result)
+        try:
+            result = run_all_strategies(code, start_date=start, end_date=end, min_period=min_rows,
+                                        buy_fee_rate=buy_fee_rate, sell_fee_rate=sell_fee_rate)
+            if result is not None:
+                result["window"] = f"{y}y"
+                all_results.append(result)
+        except Exception:
+            continue
 
     if not all_results:
         return None
@@ -389,10 +452,10 @@ def run_all_strategies_multi_window(code, windows=(1, 3, 5, 10), buy_fee_rate=0.
 def composite_score(row, w_return=0.35, w_sharpe=0.25, w_calmar=0.2, w_winrate=0.1, w_vs_lump=0.1):
     """综合评分: 年化收益×0.35 + 夏普×0.25 + calmar×0.2 + 胜率×0.1 + 超一次性×0.1"""
     score = (
-        row["annualized_return_pct"] * w_return
-        + row["sharpe_ratio"] * 10 * w_sharpe
-        + row["calmar_ratio"] * w_calmar
-        + row["win_rate_pct"] * w_winrate
-        + row["vs_lump_sum_pct"] * w_vs_lump
+        _safe_val(row.get("annualized_return_pct", 0)) * w_return
+        + _safe_val(row.get("sharpe_ratio", 0)) * 10 * w_sharpe
+        + _safe_val(row.get("calmar_ratio", 0)) * w_calmar
+        + _safe_val(row.get("win_rate_pct", 0)) * w_winrate
+        + _safe_val(row.get("vs_lump_sum_pct", 0)) * w_vs_lump
     )
     return round(score, 2)

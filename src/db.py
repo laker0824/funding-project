@@ -64,14 +64,22 @@ CREATE TABLE IF NOT EXISTS strategy_detail (
 
 
 def get_conn():
-    return sqlite3.connect(DB_PATH)
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=10)
+        conn.execute("PRAGMA journal_mode=WAL")
+        return conn
+    except sqlite3.Error as e:
+        raise RuntimeError(f"无法连接数据库 {DB_PATH}: {e}")
 
 
 def init_db():
-    conn = get_conn()
-    conn.executescript(_SCHEMA)
-    conn.commit()
-    conn.close()
+    try:
+        conn = get_conn()
+        conn.executescript(_SCHEMA)
+        conn.commit()
+        conn.close()
+    except sqlite3.Error as e:
+        raise RuntimeError(f"数据库初始化失败: {e}")
 
 
 def funds_exists():
@@ -96,124 +104,177 @@ def db_has_data():
 # ── funds ──
 
 def get_funds_df():
-    conn = get_conn()
-    df = pd.read_sql("SELECT * FROM funds", conn, dtype={"code": str})
-    conn.close()
-    return df
+    try:
+        conn = get_conn()
+        df = pd.read_sql("SELECT * FROM funds", conn, dtype={"code": str})
+        conn.close()
+        return df
+    except Exception as e:
+        return pd.DataFrame()
 
 
 def get_fund_info(code):
-    conn = get_conn()
-    row = conn.execute("SELECT * FROM funds WHERE code = ?", (code,)).fetchone()
-    conn.close()
-    if row is None:
+    try:
+        conn = get_conn()
+        row = conn.execute("SELECT * FROM funds WHERE code = ?", (code,)).fetchone()
+        conn.close()
+        if row is None:
+            return None
+        cols = ["code", "name", "fund_type", "estab_date", "endnav_float", "fund_company", "scale"]
+        return dict(zip(cols, row))
+    except Exception:
         return None
-    cols = ["code", "name", "fund_type", "estab_date", "endnav_float", "fund_company", "scale"]
-    return dict(zip(cols, row))
 
 
 def upsert_funds(df):
+    if df is None or len(df) == 0:
+        return
     conn = get_conn()
-    df.to_sql("funds", conn, if_exists="replace", index=False)
-    conn.commit()
-    conn.close()
+    try:
+        df.to_sql("funds", conn, if_exists="replace", index=False)
+        conn.commit()
+    except Exception:
+        pass
+    finally:
+        conn.close()
 
 
 # ── nav ──
 
 def load_nav(code):
-    conn = get_conn()
-    df = pd.read_sql(
-        "SELECT date, nav, acc_nav FROM nav WHERE code = ? ORDER BY date",
-        conn, params=(code,)
-    )
-    conn.close()
-    if len(df) == 0:
+    if not code or not isinstance(code, str):
         return None
-    df["date"] = pd.to_datetime(df["date"])
-    return df
+    try:
+        conn = get_conn()
+        df = pd.read_sql(
+            "SELECT date, nav, acc_nav FROM nav WHERE code = ? ORDER BY date",
+            conn, params=(code,)
+        )
+        conn.close()
+        if len(df) == 0:
+            return None
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        df = df.dropna(subset=["date"]).reset_index(drop=True)
+        return df
+    except Exception:
+        return None
 
 
 def nav_count(code):
-    conn = get_conn()
-    row = conn.execute("SELECT COUNT(*) FROM nav WHERE code = ?", (code,)).fetchone()
-    conn.close()
-    return row[0]
+    try:
+        conn = get_conn()
+        row = conn.execute("SELECT COUNT(*) FROM nav WHERE code = ?", (code,)).fetchone()
+        conn.close()
+        return row[0] if row else 0
+    except Exception:
+        return 0
 
 
 def save_nav_batch(rows):
-    conn = get_conn()
+    if not rows:
+        return
     try:
+        conn = get_conn()
         conn.execute("SELECT 1 FROM nav LIMIT 1")
     except Exception:
         init_db()
         conn = get_conn()
-    conn.executemany(
-        "INSERT OR REPLACE INTO nav (code, date, nav, acc_nav) VALUES (?, ?, ?, ?)",
-        rows
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.executemany(
+            "INSERT OR REPLACE INTO nav (code, date, nav, acc_nav) VALUES (?, ?, ?, ?)",
+            rows
+        )
+        conn.commit()
+    except Exception:
+        pass
+    finally:
+        conn.close()
 
 
 # ── ranking ──
 
 def get_ranking(window=None):
-    conn = get_conn()
-    if window:
-        df = pd.read_sql("SELECT * FROM ranking WHERE window = ?", conn,
-                         params=(window,), dtype={"code": str})
-    else:
-        df = pd.read_sql("SELECT * FROM ranking", conn, dtype={"code": str})
-    conn.close()
-    return df
+    try:
+        conn = get_conn()
+        if window:
+            df = pd.read_sql("SELECT * FROM ranking WHERE window = ?", conn,
+                             params=(window,), dtype={"code": str})
+        else:
+            df = pd.read_sql("SELECT * FROM ranking", conn, dtype={"code": str})
+        conn.close()
+        return df
+    except Exception:
+        return pd.DataFrame()
 
 
 def save_ranking(df):
+    if df is None or len(df) == 0:
+        return
     conn = get_conn()
-    df.to_sql("ranking", conn, if_exists="replace", index=False)
-    conn.commit()
-    conn.close()
+    try:
+        df.to_sql("ranking", conn, if_exists="replace", index=False)
+        conn.commit()
+    except Exception:
+        pass
+    finally:
+        conn.close()
 
 
 # ── strategy_detail ──
 
 def get_detail(window=None):
-    conn = get_conn()
-    if window:
-        df = pd.read_sql("SELECT * FROM strategy_detail WHERE window = ?", conn,
-                         params=(window,), dtype={"code": str})
-    else:
-        df = pd.read_sql("SELECT * FROM strategy_detail", conn, dtype={"code": str})
-    conn.close()
-    return df
+    try:
+        conn = get_conn()
+        if window:
+            df = pd.read_sql("SELECT * FROM strategy_detail WHERE window = ?", conn,
+                             params=(window,), dtype={"code": str})
+        else:
+            df = pd.read_sql("SELECT * FROM strategy_detail", conn, dtype={"code": str})
+        conn.close()
+        return df
+    except Exception:
+        return pd.DataFrame()
 
 
 def get_detail_by_code(code, window=None):
-    conn = get_conn()
-    if window:
-        df = pd.read_sql(
-            "SELECT * FROM strategy_detail WHERE code = ? AND window = ?", conn,
-            params=(code, window), dtype={"code": str}
-        )
-    else:
-        df = pd.read_sql(
-            "SELECT * FROM strategy_detail WHERE code = ?", conn,
-            params=(code,), dtype={"code": str}
-        )
-    conn.close()
-    return df
+    if not code or not isinstance(code, str):
+        return pd.DataFrame()
+    try:
+        conn = get_conn()
+        if window:
+            df = pd.read_sql(
+                "SELECT * FROM strategy_detail WHERE code = ? AND window = ?", conn,
+                params=(code, window), dtype={"code": str}
+            )
+        else:
+            df = pd.read_sql(
+                "SELECT * FROM strategy_detail WHERE code = ?", conn,
+                params=(code,), dtype={"code": str}
+            )
+        conn.close()
+        return df
+    except Exception:
+        return pd.DataFrame()
 
 
 def save_detail(df):
+    if df is None or len(df) == 0:
+        return
     conn = get_conn()
-    df.to_sql("strategy_detail", conn, if_exists="replace", index=False)
-    conn.commit()
-    conn.close()
+    try:
+        df.to_sql("strategy_detail", conn, if_exists="replace", index=False)
+        conn.commit()
+    except Exception:
+        pass
+    finally:
+        conn.close()
 
 
 def get_distinct_strategies():
-    conn = get_conn()
-    rows = conn.execute("SELECT DISTINCT strategy FROM strategy_detail").fetchall()
-    conn.close()
-    return [r[0] for r in rows]
+    try:
+        conn = get_conn()
+        rows = conn.execute("SELECT DISTINCT strategy FROM strategy_detail").fetchall()
+        conn.close()
+        return [r[0] for r in rows]
+    except Exception:
+        return []

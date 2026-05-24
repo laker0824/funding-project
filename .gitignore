@@ -5,6 +5,8 @@ data/param_tune/
 __pycache__/
 *.pyc
 .DS_Store
+.pytest_cache/
+tests/__pycache__/
 data/show_results.py
 data/test_nav_api.py
 data/test_strategies.py
