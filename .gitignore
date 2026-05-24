@@ -1,0 +1,12 @@
+data/funding.db
+data/nav/
+data/charts/
+data/param_tune/
+__pycache__/
+*.pyc
+.DS_Store
+data/show_results.py
+data/test_nav_api.py
+data/test_strategies.py
+requirements.txt
+run_app.bat
