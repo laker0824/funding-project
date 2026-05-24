@@ -15,7 +15,7 @@ from strategies import run_all_strategies, generate_schedule, run_backtest
 from strategies import (
     strategy_regular, strategy_ma_deviation, strategy_drawdown,
     strategy_take_profit, strategy_ma_stop, strategy_value_average,
-    composite_score, load_nav
+    composite_score, load_nav, years_offset
 )
 from viz import (
     _setup_font, _get_font, plot_strategy_pie, plot_risk_return_scatter,
@@ -125,8 +125,14 @@ pages = ["🏠 全市场概况", "🔍 基金分析", "⚙️ 参数调优", "�
 choice = st.sidebar.selectbox("导航", pages)
 
 # ── 时间窗口选择 ──
-WINDOW_OPTIONS = ["1y", "3y", "5y", "10y"]
-selected_window = st.sidebar.selectbox("回测时间窗口", WINDOW_OPTIONS, index=1)
+WINDOW_LABELS = ["3个月", "6个月", "1年", "3年", "5年", "10年"]
+WINDOW_VALUES = ["0.25y", "0.5y", "1y", "3y", "5y", "10y"]
+selected_label = st.sidebar.selectbox("回测时间窗口", WINDOW_LABELS, index=3)
+selected_window = WINDOW_VALUES[WINDOW_LABELS.index(selected_label)]
+
+
+def parse_window_years(w):
+    return float(w.replace("y", ""))
 
 def run_update(steps="all", output_area=None):
     """运行数据更新流程"""
@@ -150,7 +156,7 @@ try:
     rank_count = len(db.get_ranking(selected_window))
 except Exception:
     rank_count = "?"
-st.sidebar.markdown(f"数据: {rank_count}只基金 × 7策略 @ {selected_window}")
+st.sidebar.markdown(f"数据: {rank_count}只基金 × 7策略 @ {selected_label}")
 
 with st.sidebar.expander("🔄 数据更新", expanded=False):
     if st.button("更新净值数据", use_container_width=True):
@@ -196,8 +202,8 @@ if choice == pages[0]:
     col2.metric("策略总数", f"{detail['strategy'].nunique()} 种")
     col3.metric("记录数", f"{len(detail)} 条")
     current_year = datetime.now().year
-    interval = int(selected_window.replace("y", ""))
-    col4.metric("数据区间", f"{current_year - interval}-{current_year}")
+    window_yrs = parse_window_years(selected_window)
+    col4.metric("数据区间", f"{selected_label}")
 
     st.subheader("最优策略分布")
     fig = plot_strategy_pie(rank, save=False, show=False)
@@ -234,24 +240,28 @@ elif choice == pages[1]:
 
     rank = load_rank(selected_window)
     col1, col2 = st.columns([1, 3])
-    fund_options = rank[["code", "name"]].head(50).copy()
-    fund_options["code"] = fund_options["code"].astype(str)
-    fund_options["label"] = fund_options["code"] + " - " + fund_options["name"]
-    options_map = dict(zip(fund_options["label"], fund_options["code"]))
+    fund_options = rank[["code", "name"]].head(50).copy() if len(rank) else pd.DataFrame()
+    if len(fund_options):
+        fund_options["code"] = fund_options["code"].astype(str)
+        fund_options["name"] = fund_options["name"].fillna("").astype(str)
+        fund_options["label"] = fund_options["code"] + " - " + fund_options["name"]
+    options_map = dict(zip(fund_options.get("label", pd.Series(dtype=str)), fund_options.get("code", pd.Series(dtype=str))))
 
-    selected_label = col1.selectbox("选择基金（前50名）", options_map.keys())
+    fund_label = col1.selectbox("选择基金（前50名）", options_map.keys()) if options_map else None
     manual_code = col1.text_input("或直接输入基金代码", "")
 
     use_fee = col1.checkbox("计入交易费用", value=False)
     buy_fee = col1.slider("申购费率", 0.0, 0.015, 0.0015, 0.0005) if use_fee else 0.0
     sell_fee = col1.slider("赎回费率", 0.0, 0.015, 0.005, 0.0005) if use_fee else 0.0
 
-    fund_code = manual_code.strip() if manual_code.strip() else options_map[selected_label]
+    fund_code = manual_code.strip() if manual_code.strip() else (options_map[fund_label] if fund_label else "")
 
-    if col1.button("运行分析"):
-        window_years = int(selected_window.replace("y", ""))
-        with st.spinner(f"正在回测 {fund_code} ({selected_window})..."):
+    if col1.button("运行分析") and fund_code:
+        window_years = parse_window_years(selected_window)
+        min_period = max(50, round(window_years * 200))
+        with st.spinner(f"正在回测 {fund_code} ({selected_label})..."):
             result = run_all_strategies(fund_code, years=window_years,
+                                        min_period=min_period,
                                         buy_fee_rate=buy_fee, sell_fee_rate=sell_fee)
 
         if result is None:
@@ -289,14 +299,14 @@ elif choice == pages[1]:
             # 图表
             st.subheader("资金曲线")
             nav_df = load_nav(fund_code)
-            window_years = int(selected_window.replace("y", ""))
-            sched = generate_schedule(nav_df["date"], nav_df["date"].max() - pd.DateOffset(years=window_years),
+            window_years = parse_window_years(selected_window)
+            sched = generate_schedule(nav_df["date"], nav_df["date"].max() - years_offset(window_years),
                                       nav_df["date"].max(), freq="M", day=1)
 
             fig, axes = plt.subplots(2, 1, figsize=(14, 8), sharex=True)
 
-            axes[0].plot(nav_df[nav_df["date"] >= nav_df["date"].max() - pd.DateOffset(years=window_years)]["date"],
-                         nav_df[nav_df["date"] >= nav_df["date"].max() - pd.DateOffset(years=window_years)]["nav"],
+            axes[0].plot(nav_df[nav_df["date"] >= nav_df["date"].max() - years_offset(window_years)]["date"],
+                         nav_df[nav_df["date"] >= nav_df["date"].max() - years_offset(window_years)]["nav"],
                          color="black", linewidth=1.5, label="净值(NAV)")
             colors = plt.cm.tab10(np.linspace(0, 1, len(result)))
             for idx, (_, row) in enumerate(result.iterrows()):
@@ -376,8 +386,8 @@ elif choice == pages[2]:
             if nav_df is None or len(nav_df) < 300:
                 progress.progress((i + 1) / len(test_codes))
                 continue
-            window_years = int(selected_window.replace("y", ""))
-            start_date = nav_df["date"].max() - pd.DateOffset(years=window_years)
+            window_years = parse_window_years(selected_window)
+            start_date = nav_df["date"].max() - years_offset(window_years)
             end_date = nav_df["date"].max()
             mask = (nav_df["date"] >= start_date) & (nav_df["date"] <= end_date)
             nav_period = nav_df[mask].copy().reset_index(drop=True)

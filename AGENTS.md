@@ -17,6 +17,15 @@
 - `src/` — 所有源代码
 - `data/` — 数据文件、图表、调优结果、SQLite 数据库
 - `.streamlit/config.toml` — Streamlit 配置（已禁用用量统计）
+- `opencode.json` — opencode 配置，含 inline analyst agent 定义
+- `.opencode/agent/analyst.md` — analyst agent 参考文档（未启用）
+
+### 宏观分析 (`src/macro.py`)
+- 7 大维度: 产业政策/货币政策/地缘政治/A股市场环境/行业监管/汇率与资本/全球产业链
+- 16 条基金类型→维度映射规则
+- `get_macro_plan(code)` → 返回维度列表 + 搜索查询
+- `build_queries()` — 自动推测产业关键词，生成搜索查询
+- 仅供 `@analyst` agent 调用，不在 Streamlit 中使用
 
 ### 数据库 (`src/db.py`)
 - SQLite 数据库，路径 `data/funding.db`
@@ -31,8 +40,8 @@
 
 ### 策略函数 (`src/strategies.py`)
 - 回测入口: `run_all_strategies(code, start_date=None, end_date=None, years=None, buy_fee_rate=0.0, sell_fee_rate=0.0, min_period=200)`
-- 多窗口入口: `run_all_strategies_multi_window(code, windows=(1, 3, 5, 10), buy_fee_rate=0.0, sell_fee_rate=0.0)`
-  - 每个窗口的 `min_rows = max(100, years * 200)`（1y=200, 3y=600, 5y=1000, 10y=2000）
+- 多窗口入口: `run_all_strategies_multi_window(code, windows=(0.25, 0.5, 1, 3, 5, 10), buy_fee_rate=0.0, sell_fee_rate=0.0)`
+  - 每个窗口的 `min_rows = max(50, round(years * 200))`（3m=50, 6m=100, 1y=200, 3y=600, 5y=1000, 10y=2000）
 - 通用引擎: `run_backtest(nav_df, schedule, get_amount_fn, strategy_name, buy_fee_rate, sell_fee_rate)`
 - 新增策略需在 `strategies.py` 添加策略工厂函数，并在 `run_all_strategies` 中注册
 
@@ -43,12 +52,14 @@
 
 ### Streamlit 应用 (`src/app.py`)
 - 4 个页面通过 `selectbox` 切换
-- 侧边栏有**时间窗口选择器**（1y/3y/5y/10y），所有页面跟随切换
+- 侧边栏有**时间窗口选择器**（3m/6m/1y/3y/5y/10y），所有页面跟随切换
 - `load_rank(window)` / `load_detail(window)` 使用 `@st.cache_data` 缓存
 - 参数调优页通过 `STRATEGIC_CONFIG` 字典配置策略参数网格
 
 ### 回测性能
-- `ThreadPoolExecutor(max_workers=30)` — Windows 下最佳选择
+- `ThreadPoolExecutor(max_workers=min(len(codes), os.cpu_count()*4))` — 顶层并行
+- `run_all_strategies_multi_window` 内部窗口级并行: `ThreadPoolExecutor(max_workers=min(len(windows), 6))`
+- `run_all_strategies` 支持 `nav_df` 参数传入，避免窗口间重复加载净值
 - `ProcessPoolExecutor` 在 Windows 上会死锁（`spawn` 模式 + SQLite 竞争）
 
 ### 数据下载 (`src/downloader.py`)
@@ -72,7 +83,7 @@ Start-Process -NoNewWindow -FilePath "D:\minicoda3\envs\funding\python.exe" -Arg
 # 分类分析（可指定窗口，默认 3y）
 "D:\minicoda3\envs\funding\python.exe" src/analysis_categories.py 10y
 
-# 全量回测（多窗口 1y/3y/5y/10y，约 1.5-2h）
+# 全量回测（多窗口 3m/6m/1y/3y/5y/10y，约 1.5-2h）
 "D:\minicoda3\envs\funding\python.exe" src/analysis.py
 
 # 数据下载 & 筛选

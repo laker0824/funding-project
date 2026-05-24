@@ -5,11 +5,17 @@ import numpy as np
 from datetime import datetime, timedelta
 import os
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 NAV_DIR = os.path.join(DATA_DIR, "nav")
+
+
+def years_offset(years):
+    """pd.DateOffset 不支持小数年份，转为天数"""
+    return pd.DateOffset(days=round(years * 365.25))
 
 
 def load_nav(code):
@@ -350,19 +356,20 @@ def calc_metrics(result_df, nav_df, strategy_name=""):
 # ===================== 策略调度 =====================
 
 
-def run_all_strategies(code, start_date=None, end_date=None, years=None, buy_fee_rate=0.0, sell_fee_rate=0.0, min_period=200):
+def run_all_strategies(code, start_date=None, end_date=None, years=None, buy_fee_rate=0.0, sell_fee_rate=0.0, min_period=200, nav_df=None):
     """对一只基金运行所有策略"""
     if not isinstance(code, str) or not code.strip():
         return None
-    nav_df = load_nav(code)
-    if nav_df is None or len(nav_df) < 300:
+    if nav_df is None:
+        nav_df = load_nav(code)
+    if nav_df is None or len(nav_df) == 0:
         return None
 
     if start_date is None:
         if years is not None:
-            start_date = nav_df["date"].max() - pd.DateOffset(years=years)
+            start_date = nav_df["date"].max() - years_offset(years)
         else:
-            start_date = nav_df["date"].max() - pd.DateOffset(years=3)
+            start_date = nav_df["date"].max() - years_offset(3)
     if end_date is None:
         end_date = nav_df["date"].max()
 
@@ -417,7 +424,7 @@ def run_all_strategies(code, start_date=None, end_date=None, years=None, buy_fee
 
 
 def run_all_strategies_multi_window(code, windows=(1, 3, 5, 10), buy_fee_rate=0.0, sell_fee_rate=0.0):
-    """对一只基金运行多个时间窗口的回测"""
+    """对一只基金运行多个时间窗口的回测（窗口间并行）"""
     if not isinstance(code, str) or not code.strip():
         return None
     try:
@@ -429,20 +436,29 @@ def run_all_strategies_multi_window(code, windows=(1, 3, 5, 10), buy_fee_rate=0.
 
     end = nav_df["date"].max()
     all_results = []
-    for y in windows:
-        min_rows = max(100, y * 200)
-        start = end - pd.DateOffset(years=y)
+
+    def run_window(y):
+        min_rows = max(50, round(y * 200))
+        start = end - years_offset(y)
         mask = (nav_df["date"] >= start) & (nav_df["date"] <= end)
         if mask.sum() < min_rows:
-            continue
+            return None
         try:
             result = run_all_strategies(code, start_date=start, end_date=end, min_period=min_rows,
-                                        buy_fee_rate=buy_fee_rate, sell_fee_rate=sell_fee_rate)
+                                        buy_fee_rate=buy_fee_rate, sell_fee_rate=sell_fee_rate,
+                                        nav_df=nav_df)
             if result is not None:
                 result["window"] = f"{y}y"
-                all_results.append(result)
+            return result
         except Exception:
-            continue
+            return None
+
+    with ThreadPoolExecutor(max_workers=min(len(windows), 6)) as executor:
+        futures = {executor.submit(run_window, y): y for y in windows}
+        for f in as_completed(futures):
+            res = f.result()
+            if res is not None:
+                all_results.append(res)
 
     if not all_results:
         return None

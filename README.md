@@ -1,6 +1,6 @@
 # 基金定投策略回测分析系统
 
-基于中国市场公募基金历史净值数据，对 **7 种定投策略** 进行 **4 个时间窗口（1y/3y/5y/10y）** 全量回测比较的分析系统。
+基于中国市场公募基金历史净值数据，对 **7 种定投策略** 进行 **6 个时间窗口（3m/6m/1y/3y/5y/10y）** 全量回测比较的分析系统。
 
 覆盖 **5039 只基金**、**~800 万行日频净值数据**，结果通过 Streamlit Web 应用交互展示。
 
@@ -8,11 +8,12 @@
 
 - **全市场策略排名** — 每只基金各窗口下的最优策略及完整回测指标
 - **7 种定投策略对比** — 年化收益、最大回撤、夏普比率、胜率等
-- **多时间窗口** — 1 年 / 3 年 / 5 年 / 10 年，侧边栏一键切换
+- **多时间窗口** — 3m/6m/1y/3y/5y/10y，侧边栏一键切换
 - **单只基金深度分析** — 策略收益曲线对比、vs 一次性投入
 - **基金类型分类分析** — 按类型统计最优策略分布、平均绩效
 - **策略参数调优** — 网格搜索最佳参数组合
 - **数据自动更新** — 从天天基金 API 拉取最新净值
+- **宏观分析（@analyst）** — 结合产业政策、货币政策、地缘政治等 7 大维度综合分析
 
 ## 定投策略
 
@@ -127,6 +128,9 @@ python src/param_tune.py
 
 # 查看数据库
 python -c "import sys; sys.path.insert(0,'src'); from db import get_conn; import pandas as pd; print(pd.read_sql('SELECT code,window,best_strategy FROM ranking LIMIT 10', get_conn()))"
+
+# 宏观分析计划生成
+python -c "import sys; sys.path.insert(0,'src'); from macro import get_macro_plan; p=get_macro_plan('004320'); print(p['dimensions'], p['search_queries'])"
 ```
 
 ## 项目结构
@@ -137,11 +141,13 @@ funding project/
 │   ├── strategies.py           # 回测引擎 + 7 种定投策略
 │   ├── analysis.py             # 全市场多窗口回测主程序
 │   ├── analysis_categories.py  # 基金类型分类统计
+│   ├── analysis_compare_windows.py  # 窗口间策略一致性分析
 │   ├── fund_report.py          # 单只基金 CLI 报告
 │   ├── viz.py                  # matplotlib 可视化
 │   ├── param_tune.py           # 参数网格搜索调优
 │   ├── downloader.py           # 天天基金 API 数据下载
 │   ├── db.py                   # SQLite 数据库访问层
+│   ├── macro.py                # 宏观分析辅助（7 维度映射）
 │   └── app.py                  # Streamlit Web 应用
 ├── data/
 │   ├── funding.db              # SQLite 数据库（含全部回测结果）
@@ -149,7 +155,11 @@ funding project/
 │   ├── nav/                    # 净值 CSV 备份
 │   ├── charts/                 # 可视化图表
 │   └── param_tune/             # 参数调优结果
+├── .opencode/
+│   └── agent/
+│       └── analyst.md          # analyst agent 说明（未启用，见 opencode.json）
 ├── .streamlit/config.toml      # Streamlit 配置
+├── opencode.json               # opencode 配置（analyst agent 定义）
 ├── AGENTS.md                   # 开发约定（AI 辅助用）
 └── README.md
 ```
@@ -160,7 +170,9 @@ funding project/
 - 指数型基金最优策略分布最分散 — 均线偏离法、MA 停投法各有 7-9% 的基金最佳
 - QDII 基金受海外市场特性影响，定投收益普遍低于一次性投入
 - 申购 0.15% + 赎回 0.5% 的费用对年化收益影响约 0.5 个百分点
-- 不同时间窗口下最优策略存在显著差异，短窗口（1y）更适合灵活策略
+- **窗口间策略一致性**: 3m↔6m 65.8%, 3y↔5y 89.6%, 3m↔10y 仅 17.8%
+- **3m 窗口**周定投占 62%；**6m+**价值平均法占 71%→95%
+- **1y 窗口**是均线偏离法和 MA 停投法的 activation 分界点
 
 ## 技术栈
 
