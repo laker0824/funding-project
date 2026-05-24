@@ -423,7 +423,7 @@ def run_all_strategies(code, start_date=None, end_date=None, years=None, buy_fee
     return result
 
 
-def run_all_strategies_multi_window(code, windows=(1, 3, 5, 10), buy_fee_rate=0.0, sell_fee_rate=0.0):
+def run_all_strategies_multi_window(code, windows=(0.25, 0.5, 1, 3, 5, 10), buy_fee_rate=0.0, sell_fee_rate=0.0):
     """对一只基金运行多个时间窗口的回测（窗口间并行）"""
     if not isinstance(code, str) or not code.strip():
         return None

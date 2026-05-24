@@ -176,7 +176,7 @@ if __name__ == "__main__":
     filtered = fund_full[mask].copy()
     filtered = filtered.sort_values("endnav_float", ascending=False)
 
-    print(f"\n步骤4: 筛选结果（成立>3年, 规模>2亿）")
+    print(f"\n步骤4: 筛选结果（成立>1年, 规模>2亿）")
     print(f"  符合条件: {len(filtered)}")
 
     summary = filtered[["code", "name", "fund_type", "estab_date", "endnav_float", "fund_company"]].copy()

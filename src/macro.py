@@ -94,14 +94,6 @@ FUND_TYPE_MACRO_MAP = {
 }
 
 
-def get_fund_type(code):
-    """查基金类型"""
-    info = db.get_fund_info(code)
-    if info is None:
-        return None
-    return info.get("fund_type")
-
-
 def get_macro_plan(code):
     """根据基金代码返回宏观分析计划"""
     info = db.get_fund_info(code)

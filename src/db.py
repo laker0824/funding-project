@@ -177,6 +177,10 @@ def save_nav_batch(rows):
         conn = get_conn()
         conn.execute("SELECT 1 FROM nav LIMIT 1")
     except Exception:
+        try:
+            conn.close()
+        except Exception:
+            pass
         init_db()
         conn = get_conn()
     try:

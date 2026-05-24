@@ -3,7 +3,7 @@ import numpy as np
 import os
 import sys
 from tqdm import tqdm
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import as_completed
 import itertools
 
 sys.path.insert(0, os.path.dirname(__file__))

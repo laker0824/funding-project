@@ -201,7 +201,6 @@ if choice == pages[0]:
     col1.metric("基金总数", f"{len(rank)} 只")
     col2.metric("策略总数", f"{detail['strategy'].nunique()} 种")
     col3.metric("记录数", f"{len(detail)} 条")
-    current_year = datetime.now().year
     window_yrs = parse_window_years(selected_window)
     col4.metric("数据区间", f"{selected_label}")
 
@@ -495,9 +494,9 @@ elif choice == pages[3]:
     detail_metrics = ["annualized_return_pct", "max_drawdown_pct", "sharpe_ratio",
                       "win_rate_pct", "total_return_pct", "vs_lump_sum_pct"]
     detail_grouped = detail.groupby("strategy")[detail_metrics].mean().round(2)
-    st.dataframe(df_cn(detail_grouped.reset_index()).set_index("策略").style
-                 .format("{:+.2f}" if m in ("年化收益", "总收益", "超一次性") else "{:.2f}"
-                         for m in detail_grouped.columns),
+    cn_cols = [CN.get(c, c) for c in detail_grouped.columns]
+    fmt = {c: "{:+.2f}" if c in ("年化收益", "总收益", "超一次性") else "{:.2f}" for c in cn_cols}
+    st.dataframe(df_cn(detail_grouped.reset_index()).set_index("策略").style.format(fmt),
                  width='stretch')
 
     st.subheader("策略间相关性（年化收益）")

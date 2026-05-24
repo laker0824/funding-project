@@ -101,7 +101,7 @@ def show_fund(code, generate_chart=True, buy_fee=0.0, sell_fee=0.0):
     print(f"基金名称: {fund['name']}")
     print(f"基金类型: {fund['fund_type']}")
     print(f"成立日期: {fund['estab_date']}")
-    print(f"基金规模: {fund['规模(亿)']:.2f}亿")
+    print(f"基金规模: {fund.get('scale', 0):.2f}亿")
     if buy_fee > 0 or sell_fee > 0:
         print(f"费率: 申购{buy_fee*100:.2f}% / 赎回{sell_fee*100:.2f}%")
     print(f"{'=' * 60}")
