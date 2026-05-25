@@ -53,7 +53,8 @@
 ### Streamlit 应用 (`src/app.py`)
 - 4 个页面通过 `selectbox` 切换
 - 侧边栏有**时间窗口选择器**（3m/6m/1y/3y/5y/10y），所有页面跟随切换
-- `load_rank(window)` / `load_detail(window)` 使用 `@st.cache_data` 缓存
+- `load_rank(window)` / `load_detail(window)` / `load_all_funds()` 使用 `@st.cache_data` 缓存
+- **基金搜索/筛选**：基金分析页支持代码/名称模糊匹配 + 基金类型多选 + 规模区间滑块，覆盖全量 5039 只基金
 - 参数调优页通过 `STRATEGIC_CONFIG` 字典配置策略参数网格
 
 ### 回测性能

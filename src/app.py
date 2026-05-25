@@ -117,6 +117,11 @@ def load_fund_info(code):
     return db.get_fund_info(code)
 
 
+@st.cache_data
+def load_all_funds():
+    return db.get_funds_df()
+
+
 # ── 顶部导航 ──
 pages = ["🏠 全市场概况", "🔍 基金分析", "⚙️ 参数调优", "📊 分类分析"]
 choice = st.sidebar.selectbox("导航", pages)
@@ -234,23 +239,54 @@ if choice == pages[0]:
 elif choice == pages[1]:
     st.title("🔍 基金深度分析")
 
-    rank = load_rank(selected_window)
     col1, col2 = st.columns([1, 3])
-    fund_options = rank[["code", "name"]].head(50).copy() if len(rank) else pd.DataFrame()
-    if len(fund_options):
-        fund_options["code"] = fund_options["code"].astype(str)
-        fund_options["name"] = fund_options["name"].fillna("").astype(str)
-        fund_options["label"] = fund_options["code"] + " - " + fund_options["name"]
-    options_map = dict(zip(fund_options.get("label", pd.Series(dtype=str)), fund_options.get("code", pd.Series(dtype=str))))
 
-    fund_label = col1.selectbox("选择基金（前50名）", options_map.keys()) if options_map else None
-    manual_code = col1.text_input("或直接输入基金代码", "")
+    funds_all = load_all_funds()
+    if len(funds_all) == 0:
+        st.warning("无法加载基金列表")
+        st.stop()
+
+    funds_all = funds_all.copy()
+    funds_all["code"] = funds_all["code"].astype(str)
+    funds_all["label"] = funds_all["code"] + " - " + funds_all["name"].fillna("")
+
+    search_q = col1.text_input("搜索基金（代码/名称）", "",
+                               help="输入基金代码或名称关键字进行模糊匹配")
+
+    fund_types = sorted(funds_all["fund_type"].dropna().unique())
+    selected_types = col1.multiselect("按类型筛选", fund_types, default=[])
+
+    scale_lo, scale_hi = col1.slider("规模区间(亿)", 2.0, 2000.0, (2.0, 50.0), step=1.0,
+                                     help="拖动选择规模范围")
+
+    mask = pd.Series(True, index=funds_all.index)
+    if search_q:
+        mask &= (funds_all["code"].str.contains(search_q, na=False, regex=False) |
+                 funds_all["name"].str.contains(search_q, na=False, regex=False))
+    if selected_types:
+        mask &= funds_all["fund_type"].isin(selected_types)
+    mask &= (funds_all["scale"] >= scale_lo) & (funds_all["scale"] <= scale_hi)
+
+    filtered = funds_all[mask]
+    n_matched = len(filtered)
+
+    if n_matched == 0:
+        col1.warning("无匹配基金")
+        fund_code = ""
+    else:
+        display_list = filtered["label"].tolist()
+        if n_matched > 500:
+            display_list = display_list[:500]
+            col1.caption(f"显示前 500 只（共 {n_matched} 只匹配，请缩小搜索范围）")
+        selected_label = col1.selectbox(
+            f"选择基金（共 {n_matched} 只匹配）" if n_matched <= 500 else "选择基金",
+            display_list
+        )
+        fund_code = filtered.loc[filtered["label"] == selected_label, "code"].iloc[0]
 
     use_fee = col1.checkbox("计入交易费用", value=False)
     buy_fee = col1.slider("申购费率", 0.0, 0.015, 0.0015, 0.0005) if use_fee else 0.0
     sell_fee = col1.slider("赎回费率", 0.0, 0.015, 0.005, 0.0005) if use_fee else 0.0
-
-    fund_code = manual_code.strip() if manual_code.strip() else (options_map[fund_label] if fund_label else "")
 
     if col1.button("运行分析") and fund_code:
         window_years = parse_window_years(selected_window)
