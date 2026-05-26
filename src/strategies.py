@@ -1,11 +1,15 @@
 """策略回测核心模块"""
 
+import sys
 import pandas as pd
 import numpy as np
 from datetime import timedelta
 import os
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
 
 logger = logging.getLogger(__name__)
 
