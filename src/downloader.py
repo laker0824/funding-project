@@ -6,6 +6,7 @@ from tqdm import tqdm
 import time
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import oplog
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -150,6 +151,7 @@ def download_nav_parallel(codes, max_workers=5):
 
 
 if __name__ == "__main__":
+    _t0 = time.time()
     print("=" * 50)
     print("步骤1: 获取全市场基金列表")
     fund_list = get_fund_list()
@@ -209,6 +211,10 @@ if __name__ == "__main__":
     print("\n步骤6: 下载基准指数数据")
     download_index_data()
     print("  基准指数下载完成")
+
+    _dur = time.time() - _t0
+    oplog.log_download(funds_total=len(filtered), ok=ok, fail=fail, duration_s=_dur)
+    print(f"\n操作已记录到日志")
 
 
 def download_index_data(codes=None):

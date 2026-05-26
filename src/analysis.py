@@ -6,6 +6,7 @@ from datetime import timedelta
 from tqdm import tqdm
 import os
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import warnings
 
@@ -14,6 +15,7 @@ warnings.filterwarnings("ignore")
 sys.path.insert(0, os.path.dirname(__file__))
 from strategies import run_all_strategies_multi_window, composite_score
 import db
+import oplog
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 FUND_LIST_PATH = os.path.join(DATA_DIR, "fund_list_filtered.csv")
@@ -39,6 +41,7 @@ def process_single(code, windows=None, max_retries=2):
 
 
 def main():
+    _t0 = time.time()
     import sys
     windows = tuple(float(a) for a in sys.argv[1:]) if len(sys.argv) > 1 else WINDOWS
     print("=" * 60)
@@ -150,6 +153,14 @@ def main():
 
     total_windows = df_best.groupby("window")["code"].nunique()
     print(f"\n各窗口基金数: {dict(total_windows)}")
+
+    _dur = time.time() - _t0
+    oplog.log_backtest(
+        windows=len(windows), funds_count=len(codes),
+        duration_s=_dur,
+        summary=f"windows_detail={dict(total_windows)}",
+    )
+    print(f"操作已记录到日志")
 
 
 if __name__ == "__main__":
