@@ -104,10 +104,18 @@ def fetch_nav_single(code):
                 acc_nav = r.get("LJJZ", "")
                 if not nav:
                     continue
+                try:
+                    nav_f = float(nav)
+                except (ValueError, TypeError):
+                    continue
+                try:
+                    acc_nav_f = float(acc_nav) if acc_nav and acc_nav not in ("", "--", "N/A") else None
+                except (ValueError, TypeError):
+                    acc_nav_f = None
                 rows.append({
                     "date": r["FSRQ"],
-                    "nav": float(nav),
-                    "acc_nav": float(acc_nav) if acc_nav and acc_nav != "" else None,
+                    "nav": nav_f,
+                    "acc_nav": acc_nav_f,
                 })
             if rows:
                 df = pd.DataFrame(rows)
@@ -134,7 +142,7 @@ def download_nav_parallel(codes, max_workers=5):
             code = futures[f]
             try:
                 df = f.result()
-                if df is not None and len(df) > 250:
+                if df is not None and len(df) > 50:
                     df.to_csv(os.path.join(nav_dir, f"{code}.csv"), index=False, encoding="utf-8-sig")
                     try:
                         from db import save_nav_batch
@@ -149,6 +157,36 @@ def download_nav_parallel(codes, max_workers=5):
                 pass
     return success, len(codes) - success
 
+
+
+def download_index_data(codes=None):
+    """下载沪深300/中证500等指数日线数据（使用 AKShare）"""
+    from db import INDEX_CODES, save_index_data
+    import akshare as ak
+
+    if codes is None:
+        codes = list(INDEX_CODES.keys())
+
+    symbol_map = {
+        "000300": ("sh000300", "沪深300"),
+        "000905": ("sh000905", "中证500"),
+        "000688": ("sh000688", "科创50"),
+        "399001": ("sz399001", "深证成指"),
+    }
+
+    for code in codes:
+        if code not in symbol_map:
+            print(f"  {code}: 未知代码")
+            continue
+        symbol, name = symbol_map[code]
+        try:
+            df = ak.stock_zh_index_daily(symbol=symbol)
+            rows = [(code, str(row["date"])[:10], float(row["close"]))
+                    for _, row in df.iterrows()]
+            save_index_data(code, rows)
+            print(f"  {name} ({code}): {len(rows)} 条")
+        except Exception as e:
+            print(f"  {name} ({code}) 下载失败: {e}")
 
 if __name__ == "__main__":
     _t0 = time.time()
@@ -216,32 +254,3 @@ if __name__ == "__main__":
     oplog.log_download(funds_total=len(filtered), ok=ok, fail=fail, duration_s=_dur)
     print(f"\n操作已记录到日志")
 
-
-def download_index_data(codes=None):
-    """下载沪深300/中证500等指数日线数据（使用 AKShare）"""
-    from db import INDEX_CODES, save_index_data
-    import akshare as ak
-
-    if codes is None:
-        codes = list(INDEX_CODES.keys())
-
-    symbol_map = {
-        "000300": ("sh000300", "沪深300"),
-        "000905": ("sh000905", "中证500"),
-        "000688": ("sh000688", "科创50"),
-        "399001": ("sz399001", "深证成指"),
-    }
-
-    for code in codes:
-        if code not in symbol_map:
-            print(f"  {code}: 未知代码")
-            continue
-        symbol, name = symbol_map[code]
-        try:
-            df = ak.stock_zh_index_daily(symbol=symbol)
-            rows = [(code, str(row["date"])[:10], float(row["close"]))
-                    for _, row in df.iterrows()]
-            save_index_data(code, rows)
-            print(f"  {name} ({code}): {len(rows)} 条")
-        except Exception as e:
-            print(f"  {name} ({code}) 下载失败: {e}")

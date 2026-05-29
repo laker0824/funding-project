@@ -82,6 +82,24 @@
 - 规模筛选: `>2亿`
 - 目标类型见 `TARGET_TYPES`（股票型、混合型、指数型、QDII 等）
 - 净值下载并行写 DB + CSV
+- 已知坑: `download_index_data()` 函数定义必须放在 `if __name__` 之前，否则 NameError
+- QDII/ETF 基金 `LJJZ`(acc_nav) 可能为 `"--"` 或 `""`，float() 转换需 try/except 保护
+- 最小行数阈值: 50（原250，为覆盖新基金下调）
+
+### 数据库当前状态 (截至 2026-05-28)
+- `funds`: 5,040 只基金
+- `nav`: 5,016 只有净值数据（99.5%），844.9 万行
+- `ranking`: 4,760 只基金完成回测，6 个窗口（3m/6m/1y/3y/5y/10y），共 23,437 行
+- `strategy_detail`: 4,760 只基金 × 7 策略，共 164,059 行
+- 各窗口完成数: 3m/6m/1y 全量(4,760), 3y(4,181), 5y(3,490), 10y(1,486)
+- 无净值基金: 25 只（QDII外币份额、新基金、部分黄金ETF等）
+
+### 回测核心发现
+- **3年窗口**: 价值平均法夺冠（3,395/4,760只，83.5%跑赢一次性，平均超额+29.7%）
+- **5年窗口**: 价值平均法夺冠（3,194/3,490只，90.7%跑赢一次性，平均超额+49.5%）
+- **10年窗口**: MA停投法/均线偏离法交替领先
+- **纳指ETF(159941)** 10年回测: 所有策略跑赢一次性投入，价值平均法+1074%超额
+- **策略选择**: 短期(3m)用周定投，中期(1-5y)用价值平均法，长期(10y)用均线偏离法
 
 ## 常用命令
 
@@ -109,4 +127,13 @@ Start-Process -NoNewWindow -FilePath "D:\minicoda3\envs\funding\python.exe" -Arg
 
 # 查看数据库
 "D:\minicoda3\envs\funding\python.exe" -c "import sys; sys.path.insert(0,'src'); from db import get_conn; import pandas as pd; c=get_conn(); print(pd.read_sql('SELECT * FROM ranking LIMIT 5', c)); c.close()"
+
+# AKShare 升级（用于取最新纳指/基金数据）
+"D:\minicoda3\envs\funding\python.exe" -m pip install akshare --upgrade
+
+# 查看某只基金最新净值（数据表）
+"D:\minicoda3\envs\funding\python.exe" -c "import sys; sys.path.insert(0,'src'); from db import get_conn; import pandas as pd; c=get_conn(); print(pd.read_sql("SELECT * FROM nav WHERE code='159941' ORDER BY date DESC LIMIT 5", c)); c.close()"
+
+# 查看基金排名（按评分排序）
+"D:\minicoda3\envs\funding\python.exe" -c "import sys; sys.path.insert(0,'src'); from db import get_conn; import pandas as pd; c=get_conn(); print(pd.read_sql("SELECT r.code,f.name,r.strategy,r.score,r.annualized_return_pct,r.sharpe_ratio,r.vs_lump_sum_pct FROM ranking r JOIN funds f ON r.code=f.code WHERE r.window='3y' ORDER BY r.score DESC LIMIT 20", c)); c.close()"
 ```
