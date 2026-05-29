@@ -1,6 +1,9 @@
+import logging
 import sqlite3
 import pandas as pd
 import os
+
+logger = logging.getLogger(__name__)
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 DB_PATH = os.path.join(DATA_DIR, "funding.db")
@@ -83,6 +86,7 @@ def get_conn():
         conn.execute("PRAGMA journal_mode=WAL")
         return conn
     except sqlite3.Error as e:
+        logger.error("get_conn failed: %s", e)
         raise RuntimeError(f"无法连接数据库 {DB_PATH}: {e}")
 
 
@@ -93,6 +97,7 @@ def init_db():
         conn.commit()
         conn.close()
     except sqlite3.Error as e:
+        logger.error("init_db failed: %s", e)
         raise RuntimeError(f"数据库初始化失败: {e}")
 
 
@@ -110,8 +115,9 @@ def db_has_data():
         nc = conn.execute("SELECT COUNT(*) FROM nav LIMIT 1").fetchone()[0]
         conn.close()
         return rc > 0 and nc > 0
-    except Exception:
+    except Exception as e:
         conn.close()
+        logger.warning("db_has_data failed: %s", e)
         return False
 
 
@@ -124,6 +130,7 @@ def get_funds_df():
         conn.close()
         return df
     except Exception as e:
+        logger.warning("get_funds_df failed: %s", e)
         return pd.DataFrame()
 
 
@@ -136,7 +143,8 @@ def get_fund_info(code):
             return None
         cols = ["code", "name", "fund_type", "estab_date", "endnav_float", "fund_company", "scale"]
         return dict(zip(cols, row))
-    except Exception:
+    except Exception as e:
+        logger.warning("get_fund_info(%s) failed: %s", code, e)
         return None
 
 
@@ -147,8 +155,8 @@ def upsert_funds(df):
     try:
         df.to_sql("funds", conn, if_exists="replace", index=False)
         conn.commit()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("upsert_funds failed: %s", e)
     finally:
         conn.close()
 
@@ -170,7 +178,8 @@ def load_nav(code):
         df["date"] = pd.to_datetime(df["date"], errors="coerce")
         df = df.dropna(subset=["date"]).reset_index(drop=True)
         return df
-    except Exception:
+    except Exception as e:
+        logger.warning("load_nav(%s) failed: %s", code, e)
         return None
 
 
@@ -180,7 +189,8 @@ def nav_count(code):
         row = conn.execute("SELECT COUNT(*) FROM nav WHERE code = ?", (code,)).fetchone()
         conn.close()
         return row[0] if row else 0
-    except Exception:
+    except Exception as e:
+        logger.warning("nav_count(%s) failed: %s", code, e)
         return 0
 
 
@@ -190,7 +200,8 @@ def save_nav_batch(rows):
     try:
         conn = get_conn()
         conn.execute("SELECT 1 FROM nav LIMIT 1")
-    except Exception:
+    except Exception as e:
+        logger.warning("save_nav_batch pre-check failed: %s", e)
         try:
             conn.close()
         except Exception:
@@ -203,8 +214,8 @@ def save_nav_batch(rows):
             rows
         )
         conn.commit()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("save_nav_batch execute failed: %s", e)
     finally:
         conn.close()
 
@@ -221,7 +232,8 @@ def get_ranking(window=None):
             df = pd.read_sql("SELECT * FROM ranking", conn, dtype={"code": str})
         conn.close()
         return df
-    except Exception:
+    except Exception as e:
+        logger.warning("get_ranking(%s) failed: %s", window, e)
         return pd.DataFrame()
 
 
@@ -232,8 +244,8 @@ def save_ranking(df):
     try:
         df.to_sql("ranking", conn, if_exists="replace", index=False)
         conn.commit()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("save_ranking failed: %s", e)
     finally:
         conn.close()
 
@@ -250,7 +262,8 @@ def get_detail(window=None):
             df = pd.read_sql("SELECT * FROM strategy_detail", conn, dtype={"code": str})
         conn.close()
         return df
-    except Exception:
+    except Exception as e:
+        logger.warning("get_detail(%s) failed: %s", window, e)
         return pd.DataFrame()
 
 
@@ -271,7 +284,8 @@ def get_detail_by_code(code, window=None):
             )
         conn.close()
         return df
-    except Exception:
+    except Exception as e:
+        logger.warning("get_detail_by_code(%s, %s) failed: %s", code, window, e)
         return pd.DataFrame()
 
 
@@ -282,8 +296,8 @@ def save_detail(df):
     try:
         df.to_sql("strategy_detail", conn, if_exists="replace", index=False)
         conn.commit()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("save_detail failed: %s", e)
     finally:
         conn.close()
 
@@ -294,7 +308,8 @@ def get_distinct_strategies():
         rows = conn.execute("SELECT DISTINCT strategy FROM strategy_detail").fetchall()
         conn.close()
         return [r[0] for r in rows]
-    except Exception:
+    except Exception as e:
+        logger.warning("get_distinct_strategies failed: %s", e)
         return []
 
 
@@ -308,8 +323,8 @@ def save_index_data(code, rows):
             rows
         )
         conn.commit()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("save_index_data(%s) failed: %s", code, e)
     finally:
         conn.close()
 
@@ -329,7 +344,8 @@ def load_index_data(code):
         df["date"] = pd.to_datetime(df["date"], errors="coerce")
         df = df.dropna(subset=["date"]).reset_index(drop=True)
         return df
-    except Exception:
+    except Exception as e:
+        logger.warning("load_index_data(%s) failed: %s", code, e)
         return None
 
 
@@ -339,5 +355,6 @@ def get_index_codes():
         rows = conn.execute("SELECT DISTINCT code FROM index_nav").fetchall()
         conn.close()
         return [r[0] for r in rows]
-    except Exception:
+    except Exception as e:
+        logger.warning("get_index_codes failed: %s", e)
         return []

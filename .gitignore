@@ -2,6 +2,7 @@ data/funding.db
 data/nav/
 data/charts/
 data/param_tune/
+data/logs/
 __pycache__/
 *.pyc
 .DS_Store
