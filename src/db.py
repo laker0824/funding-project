@@ -2,8 +2,27 @@ import logging
 import sqlite3
 import pandas as pd
 import os
+from collections import deque
 
 logger = logging.getLogger(__name__)
+
+LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+
+
+class StreamlitHandler(logging.Handler):
+    def __init__(self, maxlen=200):
+        super().__init__()
+        self.buffer = deque(maxlen=maxlen)
+        self.setFormatter(logging.Formatter(LOG_FORMAT, datefmt="%H:%M:%S"))
+
+    def emit(self, record):
+        self.buffer.append(self.format(record))
+
+
+_log_handler = StreamlitHandler()
+for _name in ("db", "strategies", "viz"):
+    logging.getLogger(_name).addHandler(_log_handler)
+    logging.getLogger(_name).setLevel(logging.WARNING)
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 DB_PATH = os.path.join(DATA_DIR, "funding.db")

@@ -192,6 +192,13 @@ with st.sidebar.expander("🔄 数据更新", expanded=False):
         st.success(f"更新完成! 下载返回{out1.returncode}, 回测返回{out2.returncode}")
         st.rerun()
 
+with st.sidebar.expander("📋 运行日志", expanded=False):
+    log_text = "\n".join(db._log_handler.buffer)
+    st.code(log_text if log_text else "(无日志)", language="text")
+    if st.button("清空日志", key="clear_log"):
+        db._log_handler.buffer.clear()
+        st.rerun()
+
 st.sidebar.markdown(f"环境: Python {sys.version[:5]}")
 
 if choice == pages[0]:
