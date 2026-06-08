@@ -136,21 +136,24 @@ selected_window = WINDOW_VALUES[WINDOW_LABELS.index(selected_label)]
 def parse_window_years(w):
     return float(w.replace("y", ""))
 
-def run_update(steps="all", output_area=None):
-    """运行数据更新流程"""
-    results = []
+def run_script(script_name, timeout=3600):
     python = sys.executable
     root = os.path.dirname(os.path.dirname(__file__))
-
-    if steps in ("all", "downloader"):
-        results.append(("下载净值数据", subprocess.run(
-            [python, "src/downloader.py"], capture_output=True, text=True,
-            timeout=1800, cwd=root)))
-    if steps in ("all", "analysis"):
-        results.append(("全量回测分析", subprocess.run(
-            [python, "src/analysis.py"], capture_output=True, text=True,
-            timeout=3600, cwd=root)))
-    return results
+    proc = subprocess.Popen(
+        [python, f"src/{script_name}.py"],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        encoding="utf-8", errors="replace",
+        cwd=root,
+    )
+    for line in proc.stdout:
+        db._log_handler.buffer.append(line.rstrip("\n"))
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        return -1
+    return proc.returncode
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("**基金定投分析系统 v2.0**")
@@ -162,34 +165,23 @@ st.sidebar.markdown(f"数据: {rank_count}只基金 × 7策略 @ {selected_label
 
 with st.sidebar.expander("🔄 数据更新", expanded=False):
     if st.button("更新净值数据", use_container_width=True):
-        with st.spinner("下载中 (耗时约3-15分钟)..."):
-            r = run_update("downloader")
-            out = r[0][1]
-            st.text_area("下载输出", out.stdout[-2000:] + out.stderr[-2000:], height=200)
-            st.caption(f"返回值: {out.returncode}")
+        with st.spinner("下载中..."):
+            rc = run_script("downloader", timeout=1800)
         st.cache_data.clear()
         st.rerun()
 
     if st.button("全量回测分析", use_container_width=True):
         with st.spinner("回测中 (耗时约5-20分钟)..."):
-            r = run_update("analysis")
-            out = r[0][1]
-            st.text_area("回测输出", out.stdout[-2000:] + out.stderr[-2000:], height=200)
-            st.caption(f"返回值: {out.returncode}")
+            rc = run_script("analysis", timeout=3600)
         st.cache_data.clear()
         st.rerun()
 
     if st.button("一键全更新 (下载+回测)", type="primary", use_container_width=True):
         with st.spinner("正在下载净值数据..."):
-            r1 = run_update("downloader")
-            out1 = r1[0][1]
-            st.text_area("下载输出", out1.stdout[-1500:] + out1.stderr[-500:], height=150)
+            run_script("downloader", timeout=1800)
         with st.spinner("正在全量回测..."):
-            r2 = run_update("analysis")
-            out2 = r2[0][1]
-            st.text_area("回测输出", out2.stdout[-1500:] + out2.stderr[-500:], height=150)
+            run_script("analysis", timeout=3600)
         st.cache_data.clear()
-        st.success(f"更新完成! 下载返回{out1.returncode}, 回测返回{out2.returncode}")
         st.rerun()
 
 with st.sidebar.expander("📋 运行日志", expanded=False):

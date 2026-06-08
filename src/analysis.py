@@ -3,7 +3,7 @@
 import pandas as pd
 import numpy as np
 from datetime import timedelta
-from tqdm import tqdm
+import logging
 import os
 import sys
 import time
@@ -21,6 +21,13 @@ DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 FUND_LIST_PATH = os.path.join(DATA_DIR, "fund_list_filtered.csv")
 
 WINDOWS = (0.25, 0.5, 1, 3, 5, 10)
+
+logger = logging.getLogger("analysis")
+if not logger.handlers:
+    _sh = logging.StreamHandler(sys.stdout)
+    _sh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s", datefmt="%H:%M:%S"))
+    logger.addHandler(_sh)
+    logger.setLevel(logging.INFO)
 
 
 def load_fund_list():
@@ -44,33 +51,38 @@ def main():
     _t0 = time.time()
     import sys
     windows = tuple(float(a) for a in sys.argv[1:]) if len(sys.argv) > 1 else WINDOWS
-    print("=" * 60)
-    print("基金定投回测分析系统")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("基金定投回测分析系统")
+    logger.info("=" * 60)
 
     fund_list = load_fund_list()
-    print(f"\n加载基金列表: {len(fund_list)} 只")
-    print(f"回测窗口: {', '.join(f'{w}y' for w in windows)}")
+    logger.info("加载基金列表: %d 只", len(fund_list))
+    logger.info("回测窗口: %s", ", ".join(f"{w}y" for w in windows))
 
     nav_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "nav")
     codes = [c for c in fund_list["code"].tolist() if os.path.exists(os.path.join(nav_dir, f"{c}.csv"))]
-    print(f"有净值文件的基金: {len(codes)} 只")
+    logger.info("有净值文件的基金: %d 只", len(codes))
 
     n_workers = min(len(codes), os.cpu_count() * 4)
-    print(f"\n开始全量回测 (并行{n_workers}线程 × 窗口内6路并行)...")
+    logger.info("开始全量回测 (并行%d线程 × 窗口内6路并行)...", n_workers)
     all_results = []
     with ThreadPoolExecutor(max_workers=n_workers) as executor:
         futures = {executor.submit(process_single, code, windows): code for code in codes}
-        for f in tqdm(as_completed(futures), total=len(futures), desc="回测进度"):
+        done_count = 0
+        total = len(futures)
+        for f in as_completed(futures):
+            done_count += 1
             try:
                 res = f.result()
                 if res is not None:
                     all_results.append(res)
             except Exception:
                 pass
+            if done_count % 100 == 0 or done_count == total:
+                logger.info("回测进度: %d/%d只", done_count, total)
 
     if not all_results:
-        print("无有效结果")
+        logger.warning("无有效结果")
         return
 
     df_all = pd.concat(all_results, ignore_index=True)
@@ -97,35 +109,35 @@ def main():
                  "vs_lump_sum_pct", "score"]
     out_path = os.path.join(DATA_DIR, "dca_ranking.csv")
     df_best[cols_show].to_csv(out_path, index=False, encoding="utf-8-sig")
-    print(f"\n排名已保存: {out_path}")
+    logger.info("排名已保存: %s", out_path)
 
     # ---- 按窗口打印 Top 10 ----
     for w in sorted(df_best["window"].unique()):
         subset = df_best[df_best["window"] == w].head(10)
-        print(f"\n{'=' * 60}")
-        print(f"定投最优基金 Top 10 ({w})")
-        print("=" * 60)
+        logger.info("=" * 60)
+        logger.info("定投最优基金 Top 10 (%s)", w)
+        logger.info("=" * 60)
         for i, (_, row) in enumerate(subset.iterrows(), 1):
-            print(f"\n{i:2d}. {row['name']} ({row['code']})")
-            print(f"    类型: {row['fund_type']}  |  策略: {row['strategy']}")
-            print(f"    年化: {row['annualized_return_pct']:+.2f}%  评分: {row['score']:.2f}")
+            logger.info("%2d. %s (%s)", i, row["name"], row["code"])
+            logger.info("    类型: %s  |  策略: %s", row["fund_type"], row["strategy"])
+            logger.info("    年化: %+.2f%%  评分: %.2f", row["annualized_return_pct"], row["score"])
 
     # ---- 策略分布 ----
-    print("\n" + "=" * 60)
-    print("策略分布统计 (各窗口)")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("策略分布统计 (各窗口)")
+    logger.info("=" * 60)
     for w in sorted(df_best["window"].unique()):
         subset = df_best[df_best["window"] == w]
         strat_stats = subset["strategy"].value_counts()
-        print(f"\n  [{w}] 共 {len(subset)} 只:")
+        logger.info("[%s] 共 %d 只:", w, len(subset))
         for s, c in strat_stats.items():
             avg_ret = subset[subset["strategy"] == s]["annualized_return_pct"].mean()
-            print(f"    {s:16s}: {c:4d} 只 | 平均年化 {avg_ret:+.2f}%")
+            logger.info("    %s: %4d 只 | 平均年化 %+.2f%%", s, c, avg_ret)
 
     # ---- 策略详情 ----
     detail_path = os.path.join(DATA_DIR, "dca_strategy_detail.csv")
     df_all.to_csv(detail_path, index=False, encoding="utf-8-sig")
-    print(f"\n策略明细已保存: {detail_path}")
+    logger.info("策略明细已保存: %s", detail_path)
 
     # ---- 写入数据库（增量合并） ----
     db.init_db()
@@ -149,10 +161,10 @@ def main():
         existing_detail = existing_detail[~existing_detail["window"].isin(df_all["window"].unique())]
         df_all = pd.concat([existing_detail, df_all], ignore_index=True)
     db.save_detail(df_all)
-    print("数据库已更新（增量合并）")
+    logger.info("数据库已更新（增量合并）")
 
     total_windows = df_best.groupby("window")["code"].nunique()
-    print(f"\n各窗口基金数: {dict(total_windows)}")
+    logger.info("各窗口基金数: %s", dict(total_windows))
 
     _dur = time.time() - _t0
     oplog.log_backtest(
@@ -160,7 +172,7 @@ def main():
         duration_s=_dur,
         summary=f"windows_detail={dict(total_windows)}",
     )
-    print(f"操作已记录到日志")
+    logger.info("操作已记录到日志")
 
 
 if __name__ == "__main__":

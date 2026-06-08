@@ -2,7 +2,7 @@ import requests
 import pandas as pd
 import json
 from datetime import datetime, timedelta
-from tqdm import tqdm
+import logging
 import time
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -10,6 +10,13 @@ import oplog
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 os.makedirs(DATA_DIR, exist_ok=True)
+
+logger = logging.getLogger("downloader")
+if not logger.handlers:
+    _sh = logging.StreamHandler()
+    _sh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s", datefmt="%H:%M:%S"))
+    logger.addHandler(_sh)
+    logger.setLevel(logging.INFO)
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15",
@@ -41,19 +48,17 @@ TARGET_TYPES = {
 
 
 def get_fund_list():
-    """获取全市场基金列表（含类型）"""
     url = "https://fund.eastmoney.com/js/fundcode_search.js"
     resp = requests.get(url, timeout=15)
     data = json.loads(resp.text[resp.text.index("[") : -1])
     df = pd.DataFrame(data, columns=["code", "pinyin", "name", "fund_type", "pinyin_full"])
     df = df.drop(columns=["pinyin", "pinyin_full"])
     df["code"] = df["code"].str.strip()
-    print(f"全市场基金总数: {len(df)}")
+    logger.info("全市场基金总数: %d", len(df))
     return df
 
 
 def fetch_fund_info_single(code):
-    """获取单只基金详细信息"""
     url = "https://fundmobapi.eastmoney.com/FundMNewApi/FundMNNBasicInformation"
     params = {
         "FCODE": code,
@@ -77,17 +82,20 @@ def fetch_fund_info_single(code):
 
 
 def get_fund_info_parallel(codes, max_workers=10):
-    """并行获取基金基本信息"""
     results = []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(fetch_fund_info_single, code): code for code in codes}
-        for f in tqdm(as_completed(futures), total=len(codes), desc="获取基金信息"):
+        done_count = 0
+        total = len(codes)
+        for f in as_completed(futures):
             results.append(f.result())
+            done_count += 1
+            if done_count % 200 == 0 or done_count == total:
+                logger.info("获取基金信息: %d/%d", done_count, total)
     return pd.DataFrame(results)
 
 
 def fetch_nav_single(code):
-    """获取单只基金历史净值"""
     url = "https://fundmobapi.eastmoney.com/FundMNewApi/FundMNHisNetList"
     params = {"FCODE": code, "pageIndex": "1", **NAV_PARAMS}
     headers = {
@@ -127,19 +135,21 @@ def fetch_nav_single(code):
 
 
 def download_nav_parallel(codes, max_workers=5):
-    """并行下载基金净值数据"""
     nav_dir = os.path.join(DATA_DIR, "nav")
     os.makedirs(nav_dir, exist_ok=True)
 
     existing = {f.replace(".csv", "") for f in os.listdir(nav_dir) if f.endswith(".csv")}
     codes = [c for c in codes if c not in existing]
-    print(f"已存在 {len(existing)} 只, 还需下载 {len(codes)} 只")
+    logger.info("已存在 %d 只, 还需下载 %d 只", len(existing), len(codes))
 
     success = 0
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(fetch_nav_single, code): code for code in codes}
-        for f in tqdm(as_completed(futures), total=len(futures), desc="下载净值"):
+        done_count = 0
+        total = len(futures)
+        for f in as_completed(futures):
             code = futures[f]
+            done_count += 1
             try:
                 df = f.result()
                 if df is not None and len(df) > 50:
@@ -155,12 +165,13 @@ def download_nav_parallel(codes, max_workers=5):
                     success += 1
             except Exception:
                 pass
+            if done_count % 100 == 0 or done_count == total:
+                logger.info("下载净值: %d/%d只 (成功%d)", done_count, total, success)
     return success, len(codes) - success
 
 
 
 def download_index_data(codes=None):
-    """下载沪深300/中证500等指数日线数据（使用 AKShare）"""
     from db import INDEX_CODES, save_index_data
     import akshare as ak
 
@@ -176,7 +187,7 @@ def download_index_data(codes=None):
 
     for code in codes:
         if code not in symbol_map:
-            print(f"  {code}: 未知代码")
+            logger.warning("%s: 未知代码", code)
             continue
         symbol, name = symbol_map[code]
         try:
@@ -184,23 +195,23 @@ def download_index_data(codes=None):
             rows = [(code, str(row["date"])[:10], float(row["close"]))
                     for _, row in df.iterrows()]
             save_index_data(code, rows)
-            print(f"  {name} ({code}): {len(rows)} 条")
+            logger.info("%s (%s): %d 条", name, code, len(rows))
         except Exception as e:
-            print(f"  {name} ({code}) 下载失败: {e}")
+            logger.warning("%s (%s) 下载失败: %s", name, code, e)
 
 if __name__ == "__main__":
     _t0 = time.time()
-    print("=" * 50)
-    print("步骤1: 获取全市场基金列表")
+    logger.info("=" * 50)
+    logger.info("步骤1: 获取全市场基金列表")
     fund_list = get_fund_list()
 
-    print("\n步骤2: 筛选目标类型")
+    logger.info("步骤2: 筛选目标类型")
     target = fund_list[fund_list["fund_type"].isin(TARGET_TYPES)].copy()
-    print(f"目标类型基金: {len(target)}")
+    logger.info("目标类型基金: %d", len(target))
     for t, cnt in target["fund_type"].value_counts().items():
-        print(f"  {t}: {cnt}")
+        logger.info("  %s: %d", t, cnt)
 
-    print("\n步骤3: 并行获取基金详细信息")
+    logger.info("步骤3: 并行获取基金详细信息")
     info_df = get_fund_info_parallel(target["code"].tolist(), max_workers=15)
     fund_full = target.merge(info_df, on="code", how="left")
 
@@ -216,16 +227,16 @@ if __name__ == "__main__":
     filtered = fund_full[mask].copy()
     filtered = filtered.sort_values("endnav_float", ascending=False)
 
-    print(f"\n步骤4: 筛选结果（成立>1年, 规模>2亿）")
-    print(f"  符合条件: {len(filtered)}")
+    logger.info("步骤4: 筛选结果（成立>1年, 规模>2亿）")
+    logger.info("  符合条件: %d", len(filtered))
 
     summary = filtered[["code", "name", "fund_type", "estab_date", "endnav_float", "fund_company"]].copy()
     summary["endnav_yi"] = (summary["endnav_float"] / 1e8).round(2)
     summary = summary.rename(columns={"endnav_yi": "规模(亿)"})
     summary.to_csv(os.path.join(DATA_DIR, "fund_list_filtered.csv"), index=False, encoding="utf-8-sig")
-    print(f"  已保存: data/fund_list_filtered.csv")
+    logger.info("  已保存: data/fund_list_filtered.csv")
 
-    print("\n步骤4b: 更新数据库基金列表")
+    logger.info("步骤4b: 更新数据库基金列表")
     try:
         from db import init_db, upsert_funds, save_nav_batch
         init_db()
@@ -234,23 +245,22 @@ if __name__ == "__main__":
         fund_db = fund_db.rename(columns={"规模(亿)": "scale"})
         fund_db["code"] = fund_db["code"].astype(str).str.strip()
         upsert_funds(fund_db)
-        print(f"  数据库已更新: {len(fund_db)} 只基金")
+        logger.info("  数据库已更新: %d 只基金", len(fund_db))
     except Exception as e:
-        print(f"  数据库更新失败: {e}")
+        logger.warning("  数据库更新失败: %s", e)
 
-    print("\n步骤5: 并行下载历史净值数据")
+    logger.info("步骤5: 并行下载历史净值数据")
     from db import init_db
     init_db()
     qualified = filtered["code"].tolist()
-    print(f"  需下载: {len(qualified)} 只")
+    logger.info("  需下载: %d 只", len(qualified))
     ok, fail = download_nav_parallel(qualified, max_workers=8)
-    print(f"\n完成: 成功 {ok}, 失败 {fail}")
+    logger.info("完成: 成功 %d, 失败 %d", ok, fail)
 
-    print("\n步骤6: 下载基准指数数据")
+    logger.info("步骤6: 下载基准指数数据")
     download_index_data()
-    print("  基准指数下载完成")
+    logger.info("  基准指数下载完成")
 
     _dur = time.time() - _t0
     oplog.log_download(funds_total=len(filtered), ok=ok, fail=fail, duration_s=_dur)
-    print(f"\n操作已记录到日志")
-
+    logger.info("操作已记录到日志")
