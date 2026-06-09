@@ -167,6 +167,9 @@ def main():
     logger.info("各窗口基金数: %s", dict(total_windows))
 
     _dur = time.time() - _t0
+    _m, _s = divmod(int(_dur), 60)
+    _h, _m = divmod(_m, 60)
+    logger.info("总耗时: %dh%02dm%02ds", _h, _m, _s)
     oplog.log_backtest(
         windows=len(windows), funds_count=len(codes),
         duration_s=_dur,
