@@ -63,8 +63,8 @@ def main():
     codes = [c for c in fund_list["code"].tolist() if os.path.exists(os.path.join(nav_dir, f"{c}.csv"))]
     logger.info("有净值文件的基金: %d 只", len(codes))
 
-    n_workers = min(len(codes), os.cpu_count() * 4)
-    logger.info("开始全量回测 (并行%d线程 × 窗口内6路并行)...", n_workers)
+    n_workers = min(len(codes), os.cpu_count())
+    logger.info("开始全量回测 (并行%d线程)...", n_workers)
     all_results = []
     with ThreadPoolExecutor(max_workers=n_workers) as executor:
         futures = {executor.submit(process_single, code, windows): code for code in codes}

@@ -6,7 +6,6 @@ import numpy as np
 from datetime import timedelta
 import os
 import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
@@ -460,28 +459,21 @@ def run_all_strategies_multi_window(code, windows=(0.25, 0.5, 1, 3, 5, 10), buy_
     end = nav_df["date"].max()
     all_results = []
 
-    def run_window(y):
+    for y in windows:
         min_rows = max(50, round(y * 200))
         start = end - years_offset(y)
         mask = (nav_df["date"] >= start) & (nav_df["date"] <= end)
         if mask.sum() < min_rows:
-            return None
+            continue
         try:
             result = run_all_strategies(code, start_date=start, end_date=end, min_period=min_rows,
                                         buy_fee_rate=buy_fee_rate, sell_fee_rate=sell_fee_rate,
                                         nav_df=nav_df)
             if result is not None:
                 result["window"] = f"{y}y"
-            return result
+                all_results.append(result)
         except Exception:
-            return None
-
-    with ThreadPoolExecutor(max_workers=min(len(windows), 6)) as executor:
-        futures = {executor.submit(run_window, y): y for y in windows}
-        for f in as_completed(futures):
-            res = f.result()
-            if res is not None:
-                all_results.append(res)
+            pass
 
     if not all_results:
         return None
