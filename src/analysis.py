@@ -7,7 +7,6 @@ import logging
 import os
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -63,23 +62,15 @@ def main():
     codes = [c for c in fund_list["code"].tolist() if os.path.exists(os.path.join(nav_dir, f"{c}.csv"))]
     logger.info("有净值文件的基金: %d 只", len(codes))
 
-    n_workers = min(len(codes), os.cpu_count())
-    logger.info("开始全量回测 (并行%d线程)...", n_workers)
+    logger.info("开始全量回测...")
     all_results = []
-    with ThreadPoolExecutor(max_workers=n_workers) as executor:
-        futures = {executor.submit(process_single, code, windows): code for code in codes}
-        done_count = 0
-        total = len(futures)
-        for f in as_completed(futures):
-            done_count += 1
-            try:
-                res = f.result()
-                if res is not None:
-                    all_results.append(res)
-            except Exception:
-                pass
-            if done_count % 100 == 0 or done_count == total:
-                logger.info("回测进度: %d/%d只", done_count, total)
+    total = len(codes)
+    for i, code in enumerate(codes, 1):
+        res = process_single(code, windows)
+        if res is not None:
+            all_results.append(res)
+        if i % 100 == 0 or i == total:
+            logger.info("回测进度: %d/%d只", i, total)
 
     if not all_results:
         logger.warning("无有效结果")
