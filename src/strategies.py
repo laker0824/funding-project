@@ -121,30 +121,42 @@ def run_backtest(nav_df, schedule, get_amount_fn, strategy_name="", buy_fee_rate
         return calc_metrics(pd.DataFrame(), nav_df, strategy_name), pd.DataFrame()
     if "date" not in nav_df.columns or "nav" not in nav_df.columns:
         return calc_metrics(pd.DataFrame(), nav_df, strategy_name), pd.DataFrame()
+
+    dates = nav_df["date"].values
+    navs = nav_df["nav"].values
+    acc_navs = nav_df.get("acc_nav", nav_df["nav"]).values
+    n = len(dates)
+
     nav_series = nav_df.set_index("date")["nav"]
-    if schedule is None or len(schedule) == 0:
-        schedule = pd.DataFrame(columns=["date"])
+    invest_days = set(schedule["date"].values) if schedule is not None and len(schedule) > 0 else set()
 
     total_invested_with_fee = 0.0
     shares = 0.0
     cum_dividends = 0.0
     prev_div_gap = 0.0
-    peak_nav = nav_series.iloc[0]
-    state = {"peak_nav": peak_nav, "total_invested": 0, "total_shares": 0, "resets": 0}
+    state = {"peak_nav": float(navs[0]), "total_invested": 0, "total_shares": 0, "resets": 0}
 
-    rows = []
-    for idx, row in nav_df.iterrows():
-        d = row["date"]
-        nav = row["nav"]
-        is_invest_day = d in schedule["date"].values if len(schedule) > 0 else False
-        acc_nav = row.get("acc_nav", nav)
+    dates_out = [None] * n
+    navs_out = [0.0] * n
+    amounts_out = [0.0] * n
+    shares_out = [0.0] * n
+    invested_out = [0.0] * n
+    values_out = [0.0] * n
+    peaks_out = [0.0] * n
+
+    for i in range(n):
+        d = dates[i]
+        nav = navs[i]
+        acc_nav = acc_navs[i]
+        is_invest_day = d in invest_days
+
         div_gap = acc_nav - nav
         if shares > 0:
             div_income = max(0, div_gap - prev_div_gap) * shares
             cum_dividends += div_income
         prev_div_gap = div_gap
 
-        amount = 0
+        amount = 0.0
         if is_invest_day:
             gross_amount = get_amount_fn(d, nav_series, state)
             if gross_amount > 0:
@@ -160,17 +172,23 @@ def run_backtest(nav_df, schedule, get_amount_fn, strategy_name="", buy_fee_rate
         if nav > state["peak_nav"]:
             state["peak_nav"] = nav
 
-        rows.append({
-            "date": d,
-            "nav": nav,
-            "amount": amount,
-            "shares": shares,
-            "invested": total_invested_with_fee,
-            "value": current_value,
-            "peak_nav": state["peak_nav"],
-        })
+        dates_out[i] = d
+        navs_out[i] = nav
+        amounts_out[i] = amount
+        shares_out[i] = shares
+        invested_out[i] = total_invested_with_fee
+        values_out[i] = current_value
+        peaks_out[i] = state["peak_nav"]
 
-    result_df = pd.DataFrame(rows)
+    result_df = pd.DataFrame({
+        "date": dates_out,
+        "nav": navs_out,
+        "amount": amounts_out,
+        "shares": shares_out,
+        "invested": invested_out,
+        "value": values_out,
+        "peak_nav": peaks_out,
+    })
 
     if sell_fee_rate > 0:
         final_value = result_df["value"].iloc[-1]
@@ -445,15 +463,18 @@ def run_all_strategies(code, start_date=None, end_date=None, years=None, buy_fee
     return result
 
 
-def run_all_strategies_multi_window(code, windows=(0.25, 0.5, 1, 3, 5, 10), buy_fee_rate=0.0, sell_fee_rate=0.0):
-    """对一只基金运行多个时间窗口的回测（窗口间并行）"""
+def run_all_strategies_multi_window(code, windows=(0.25, 0.5, 1, 3, 5, 10), buy_fee_rate=0.0, sell_fee_rate=0.0, nav_df=None):
+    """对一只基金运行多个时间窗口的回测"""
     if not isinstance(code, str) or not code.strip():
         return None
-    try:
-        nav_df = load_nav(code)
-        if nav_df is None or len(nav_df) < 300:
+    if nav_df is None:
+        try:
+            nav_df = load_nav(code)
+            if nav_df is None or len(nav_df) < 300:
+                return None
+        except Exception:
             return None
-    except Exception:
+    elif len(nav_df) < 300:
         return None
 
     end = nav_df["date"].max()

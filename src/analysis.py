@@ -8,11 +8,12 @@ import os
 import sys
 import time
 import warnings
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 warnings.filterwarnings("ignore")
 
 sys.path.insert(0, os.path.dirname(__file__))
-from strategies import run_all_strategies_multi_window, composite_score
+from strategies import run_all_strategies_multi_window, composite_score, load_nav
 import db
 import oplog
 
@@ -34,11 +35,24 @@ def load_fund_list():
     return df
 
 
-def process_single(code, windows=None, max_retries=2):
+def preload_all_nav(codes):
+    nav_cache = {}
+    for c in codes:
+        try:
+            df = load_nav(c)
+            if df is not None and len(df) >= 300:
+                nav_cache[c] = df
+        except Exception:
+            pass
+    return nav_cache
+
+
+def process_single(code, windows=None, nav_cache=None, max_retries=2):
     w = windows if windows is not None else WINDOWS
+    nav_df = nav_cache.get(code) if nav_cache else None
     for _ in range(max_retries):
         try:
-            result = run_all_strategies_multi_window(code, windows=w)
+            result = run_all_strategies_multi_window(code, windows=w, nav_df=nav_df)
             if result is not None:
                 return result
         except Exception:
@@ -48,7 +62,6 @@ def process_single(code, windows=None, max_retries=2):
 
 def main():
     _t0 = time.time()
-    import sys
     windows = tuple(float(a) for a in sys.argv[1:]) if len(sys.argv) > 1 else WINDOWS
     logger.info("=" * 60)
     logger.info("基金定投回测分析系统")
@@ -62,15 +75,28 @@ def main():
     codes = [c for c in fund_list["code"].tolist() if os.path.exists(os.path.join(nav_dir, f"{c}.csv"))]
     logger.info("有净值文件的基金: %d 只", len(codes))
 
-    logger.info("开始全量回测...")
+    logger.info("预加载全部净值数据...")
+    _t1 = time.time()
+    nav_cache = preload_all_nav(codes)
+    logger.info("预加载完成: %d 只 (%.1fs)", len(nav_cache), time.time() - _t1)
+
+    n_workers = min(len(codes), os.cpu_count())
+    logger.info("开始全量回测 (多线程%d)...", n_workers)
     all_results = []
     total = len(codes)
-    for i, code in enumerate(codes, 1):
-        res = process_single(code, windows)
-        if res is not None:
-            all_results.append(res)
-        if i % 100 == 0 or i == total:
-            logger.info("回测进度: %d/%d只", i, total)
+    with ThreadPoolExecutor(max_workers=n_workers) as executor:
+        futures = {executor.submit(process_single, code, windows, nav_cache): code for code in codes}
+        done_count = 0
+        for f in as_completed(futures):
+            done_count += 1
+            try:
+                res = f.result()
+                if res is not None:
+                    all_results.append(res)
+            except Exception:
+                pass
+            if done_count % 100 == 0 or done_count == total:
+                logger.info("回测进度: %d/%d只", done_count, total)
 
     if not all_results:
         logger.warning("无有效结果")
